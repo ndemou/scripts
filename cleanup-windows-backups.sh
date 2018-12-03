@@ -82,16 +82,15 @@ df -m .
 
 echo "Creating list of dirs that MAY BE cache or temp dirs"
 (
-#locate dirs with >50MB that *may* be cache dirs
+#locate dirs which *may* be cache dirs
 echo "# files bellow MAY BE cache dirs "
-cat /tmp/cleanup-appdatadirs|grep -i cache|sed -e 's/\(cache[^/]*\).*$/\1/I'|uniq|xargs -i du -sm "{}"|gawk '$1>50 {print}'
+cat /tmp/cleanup-appdatadirs|grep -i cache|sed -e 's/\(cache[^/]*\).*$/\1/I'|uniq
+# if you pipe the result via this command it will only print dirs with more than 50MB
+# |xargs -i du -sm "{}"|gawk '$1>50 {print}'
 
-#locate dirs with >50MB that *may* be temp dirs
+#locate dirs which *may* be temp dirs
 echo "# files bellow MAY BE temp dirs "
-find -type d|grep -i '/\(temp\|temporary[^/]*\)$'|xargs -i du -sm "{}"|gawk '$1>50 {print}'
-
-echo "# files bellow are outlook data files you _MAY_ wish to delete"
-find -iname "*.pst" -or -iname "*.ost" | grep "/AppData/Local/Microsoft/"
+cat /tmp/cleanup-appdatadirs|grep -i '/\(temp\|temporary[^/]*\)$'
 ) > /tmp/cleanup-maybe-delete-these-$$
 
 echo "Lists of files that were deleted were written to /tmp/cleanup*"
