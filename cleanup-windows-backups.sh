@@ -54,7 +54,7 @@ if [[ -z "$1" ]] ; then
 __EOF__
 
 
-echo "disk usage (in MBytes) before deletions"
+echo "Disk usage (in MBytes) before deletions"
 df -m .
 
 echo "Building list of dirs in AppData"
@@ -65,17 +65,11 @@ grep -f /tmp/rm-list /tmp/cleanup-appdatadirs > /tmp/cleanup-deleted-from-appdat
 xargs -i rm -rf "{}" < /tmp/cleanup-deleted-from-appdata
 echo "I've kept the list of files that were deleted at /tmp/cleanup-deleted-from-appdata"
 
-echo "disk usage after deletions"
+echo "Disk usage after deletions from AppData"
 df -m .
 
-echo deleting .tmp files and office temporary files
-find -type f -iname '*.tmp' -delete
-find -iname '~$*.xls?' -delete
-find -iname '~$*.xls' -delete
-find -iname '~$*.doc?' -delete
-find -iname '~$*.doc' -delete
-find -iname '~$*.ppt?' -delete
-find -iname '~$*.ppt' -delete
+echo "Deleting .tmp files and office temp files from everywhere"
+find -type f -iname '*.tmp' -or -iname '~$*.????' -or -iname '~$*.???' -delete
 
 echo "disk usage after deletions"
 df -m .
