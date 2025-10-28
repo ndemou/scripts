@@ -22,6 +22,12 @@ TODO:
 	
   2) Make sed function use Test-TextFileEncoding
   
+  3) I have a few functions with this comment:
+     # Internal function DO NOT PUBLISH
+	 They are used only by Test-TextFileEncoding but I can't inline them inside it
+	 without abandoning the begin/process style that allows stuff like 
+	    ls -File | Test-TextFileEncoding
+  
 #>
 # -------------------------------------------
 <# [System.Text.Encoding]::GetEncoding(1253) or 'iso-8859-7' will not work in PowerShell 7 (only UTF encodings are available by default). To load legacy encodings you must call:
@@ -245,6 +251,7 @@ function Get-NewlineStyleFromString {
 
   function Invoke-Uchardet {
     # Run uchardet with robust quoting and timeout. Never throws; returns a result object.
+	# Internal function DO NOT PUBLISH
     [CmdletBinding()]
     param(
       [Parameter(Mandatory)][string]$FilePath,
@@ -312,6 +319,7 @@ function Get-NewlineStyleFromString {
 
   function Write-BytesToTempFile {
     # Write bytes to a temp file and return the path.
+	# Internal function DO NOT PUBLISH	
     [CmdletBinding()]
     param([Parameter(Mandatory)][byte[]]$Buffer)
     try {
@@ -326,6 +334,7 @@ function Get-NewlineStyleFromString {
   
   function Get-EncodingObjectFromDescription {
     # Convert a final description to a .NET Encoding object, if possible.
+	# Internal function DO NOT PUBLISH	
     [CmdletBinding()]
     param([string]$Description)
     function Map-UchardetToDotNetName {
