@@ -48,7 +48,8 @@ Performs an in-place search and replace on a text file (similar to Linux sed -i)
 
 .DESCRIPTION
 Reads the contents of the specified file, performs a search and replace,
-and writes the modified contents back to the same file in UTF-8 encoding.
+and writes the modified contents back to the same file.
+Uses UTF8 encoding.
 By default, the search pattern is treated as a regular expression.
 Use -Literal to match the pattern as plain text.
 
@@ -96,8 +97,8 @@ Without -Literal, the -replace operator uses regex syntax.
         $Pattern = [regex]::Escape($Pattern)
     }
 
-    (Get-Content $File -Raw) -replace $Pattern, $Replacement |
-        Set-Content $File -Encoding utf8
+    (Get-Content $File -Raw -Encoding UTF8) -replace $Pattern, $Replacement |
+        Set-Content $File -Encoding UTF8
 }
 
 
