@@ -1,6 +1,7 @@
 Όταν μιλάμε για AI, στην πραγματικότητα μιλάμε για **LLMs (Large Language Models)**, που είναι μια συγκεκριμένη εκδοχή AI.
 
-<img src="https://github.com/user-attachments/assets/4d788ea6-b795-4a0e-a67f-a6f7de2df6d2" />
+<img width="650" height="587" alt="image" src="https://github.com/user-attachments/assets/041b67f0-c04f-4f5c-8811-7f56e4fc85ea" />
+
 
 
 -----
