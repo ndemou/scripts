@@ -1,6 +1,6 @@
 Όταν μιλάμε για AI, στην πραγματικότητα μιλάμε για **LLMs (Large Language Models)**, που είναι μια συγκεκριμένη εκδοχή AI.
 
-<img width="1408" height="768" alt="Gemini_Generated_Image_pxmmripxmmripxmm" src="https://github.com/user-attachments/assets/4d788ea6-b795-4a0e-a67f-a6f7de2df6d2" />
+<img src="https://github.com/user-attachments/assets/4d788ea6-b795-4a0e-a67f-a6f7de2df6d2" />
 
 
 -----
@@ -132,7 +132,7 @@
 ```
 .
 .
-..
+.
 .
 .
 .
@@ -170,14 +170,26 @@ Question: **Why is the sky blue?**
 
 Answer: \_\_\_
 
-<img width="709" height="1536" alt="Pasted image 20260324193511" src="https://github.com/user-attachments/assets/94333075-1a18-4246-93bf-63c896b900fa" />
+```
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
+.
 
 ```
-|
-|
-|
-|
-```
+
+## But sometimes it fails miserably 
+
+<img height="750" src="https://github.com/user-attachments/assets/94333075-1a18-4246-93bf-63c896b900fa" />
 
 -----
 
@@ -320,6 +332,3 @@ Answer: \_\_\_
 
 <img width="1408" height="768" alt="Gemini_Generated_Image_u7bsheu7bsheu7bs" src="https://github.com/user-attachments/assets/21b7f877-f6af-4e14-9568-378d2c1b414b" />
 
------
-
-**Θα ήθελες να σε βοηθήσω να εμπλουτίσεις κάποια από τις ενότητες με περισσότερες τεχνικές λεπτομέρειες ή παραδείγματα;**
