@@ -98,9 +98,22 @@
       <li class="script-item">
         <a class="script-link" href="helpers-text-files.ps1">helpers-text-files.ps1</a>
           <p class="script-synopsis">A collection of helper functions for handling text files</p>
-          <p class="script-synopsis">For Edit-TextFile and Get-TextFileEncoding on PS 7 CoreLib</p>
-          <p class="script-synopsis">[System.Text.Encoding]::GetEncoding(1252) or &#x27;iso-8859-1&#x27; will not work in PowerShell 7 (only UTF encodings are available by default).</p>
-          <p class="script-synopsis">The following code will try to register the CodePagesEncodingProvider so legacy<br>encodings like windows-1252 / iso-8859-1 are available via<br>[Text.Encoding]::GetEncoding().</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <div class="script-details-text">Functions:</div>
+          <ul class="function-list">
+            <li><strong>Replace-FileBytesSafely</strong></li>
+            <li><strong>Edit-TextFile</strong></li>
+            <li><strong>Read-FirstBytes</strong></li>
+            <li><strong>Test-ExeFound</strong></li>
+            <li><strong>Invoke-Uchardet</strong></li>
+            <li><strong>Resolve-FileFromPath</strong></li>
+            <li><strong>Get-NewlineStyle</strong></li>
+            <li><strong>Test-BufferIsValidUtf8</strong></li>
+            <li><strong>Get-TextFileEncoding</strong></li>
+            <li><strong>Remove-TypographyUnicodeFromTextFile</strong>: Substitutes Unicode typography characters with ASCII characters in one or more target text files. Mimics the interface of Edit-TextFile.</li>
+          </ul>
+        </details>
       </li>
       <li class="script-item">
         <a class="script-link" href="Run-DismSfc.ps1">Run-DismSfc.ps1</a>

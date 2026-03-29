@@ -16,7 +16,7 @@ FUNCTION_HEADER_RE = re.compile(
     r"^\s*(function|filter)\b|^\s*\[[A-Za-z][^\]]*\]\s*$|^\s*param\s*\(|^\s*{\s*$",
     re.IGNORECASE,
 )
-FUNCTION_NAME_RE = re.compile(r"^\s*(?:function|filter)\s+([A-Za-z_][\w-]*)\s*(?:\(|\{|$)", re.IGNORECASE)
+FUNCTION_NAME_RE = re.compile(r"^(?:function|filter)\s+([A-Za-z_][\w-]*)\s*(?:\(|\{|$)", re.IGNORECASE)
 
 
 @dataclass
@@ -212,6 +212,12 @@ def extract_function_docs(text: str) -> list[FunctionDoc]:
 
         if match:
             name = match.group(1)
+            if name.startswith("_"):
+                brace_depth += line.count("{") - line.count("}")
+                if brace_depth < 0:
+                    brace_depth = 0
+                i += 1
+                continue
             j = i + 1
             while j < len(lines) and not lines[j].strip():
                 j += 1
