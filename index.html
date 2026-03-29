@@ -133,12 +133,17 @@
       </li>
       <li class="script-item">
         <a class="script-link" href="Start-Copy4Toula.ps1">Start-Copy4Toula.ps1</a>
-          <p class="script-synopsis">Initializes a session transcript and provides a command to quickly copy recent output.</p>
+          <p class="script-synopsis">Minimize copy-pasting and typing while using an LLM like Toula-the-fixer to troubleshoot issues.</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">When dot-sourced, this script starts a PowerShell transcript tied to the current<br>process ID (PID) and injects a global function called &#x27;ccc&#x27;.<br>Running &#x27;ccc&#x27; reads the current transcript file, appends it to a &#x27;.full.txt&#x27; log,<br>cleans it for readability, copies the clean text to your clipboard and restarts<br>the transcript. So every time you run ccc you get the transcript since last time<br>you called ccc.</p>
-          <p class="script-details-text">*** IMPORTANT: THIS IS NOT THE SAME THING AS COPYING FROM YOUR TERMINAL ***<br>Because this tool relies on PowerShell&#x27;s Start-Transcript engine, it captures<br>data streams rather than screen rendering. This causes a few notable differences:</p>
-          <p class="script-details-text">* Native Executables: Some legacy or external CLI tools (e.g. RUNAS) write directly<br>to the console screen buffer, completely bypassing the transcript data stream.<br>* Phantom Errors: The engine captures raw parsing hiccups (like the split-second<br>before you finish a multiline command), though &#x27;ccc&#x27; attempts to sanitize these.<br>* Interactive UI: Dynamic elements like progress bars (Write-Progress),<br>choice menus, or Read-Host inputs either do not log or log as messy text.</p>
+          <p class="script-details-text">HOW TO USE<br>Begin by opening a terminal and dot-sourcing this script. E.g.:</p>
+          <p class="script-details-text">$p=&quot;C:\IT\bin&quot;;$f=&quot;Start-Copy4Toula.ps1&quot;;mkdir $p -force&gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $p\$f; . $p\$f</p>
+          <p class="script-details-text">Then repeat these steps:<br>1. Copy code from the LLM<br>2. Run `q` in the terminal<br>3. Go back to the LLM and click to paste the clipboard.</p>
+          <p class="script-details-text">Every time you run `q` it:<br>- Reads code from the clipboard.<br>- Executes it.<br>- Automatically copies the output back to the clipboard.</p>
+          <p class="script-details-text">It will copy up to 3000 lines by default. Change like this:<br>$global:SctMaxLinesToCopy = 4000</p>
+          <p class="script-details-text">If you run commands directly (without `q`) use `ccc` to copy all output<br>since the last time you run either `q` or `ccc`.</p>
+          <p class="script-details-text">UNDER THE HOOD<br>The script maintains two transcript files per PowerShell process:<br>1. `$env:TEMP\Toula-the-fixer-$PID.txt`<br>Stores the most recent chunk of output.<br>2. `$env:TEMP\Toula-the-fixer-$PID.full.txt`<br>Stores the cumulative raw history for the current session.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>. .\Start-Copy4Toula.ps1<br>q<br>q</p>
         </details>
       </li>
       <li class="script-item">
