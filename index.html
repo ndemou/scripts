@@ -116,6 +116,10 @@
         </details>
       </li>
       <li class="script-item">
+        <a class="script-link" href="Install-PrepLapCode.ps1">Install-PrepLapCode.ps1</a>
+          <p class="script-synopsis">Install/Update mazars-prepare-laptop-code</p>
+      </li>
+      <li class="script-item">
         <a class="script-link" href="Run-DismSfc.ps1">Run-DismSfc.ps1</a>
           <p class="script-synopsis">Safe* and automatic DISM + SFC repairs made easy.</p>
         <details class="script-details">
@@ -137,7 +141,7 @@
         <details class="script-details">
           <summary>Read more</summary>
           <p class="script-details-text">HOW TO USE<br>Begin by opening a terminal and dot-sourcing this script. E.g.:</p>
-          <p class="script-details-text">$p=&quot;C:\IT\bin&quot;;$f=&quot;Start-Copy4Toula.ps1&quot;;mkdir $p -force&gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $p\$f; . $p\$f</p>
+          <p class="script-details-text">$p=&quot;C:\IT\bin&quot;;$f=&quot;Start-Copy4Toula.ps1&quot;;mkdir $p -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $p\$f; . $p\$f</p>
           <p class="script-details-text">Then repeat these steps:<br>1. Copy code from the LLM<br>2. Run `q` in the terminal<br>3. Go back to the LLM and click to paste the clipboard.</p>
           <p class="script-details-text">Every time you run `q` it:<br>- Reads code from the clipboard.<br>- Executes it.<br>- Automatically copies the output back to the clipboard.</p>
           <p class="script-details-text">It will copy up to 3000 lines by default. Change like this:<br>$global:SctMaxLinesToCopy = 4000</p>

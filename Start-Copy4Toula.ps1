@@ -7,7 +7,7 @@ HOW TO USE
 ----------
 Begin by opening a terminal and dot-sourcing this script. E.g.:
     
-    $p="C:\IT\bin";$f="Start-Copy4Toula.ps1";mkdir $p -force>$null;iwr -useb https://ndemou.github.io/scripts/$f -out $p\$f; . $p\$f
+    $p="C:\IT\bin";$f="Start-Copy4Toula.ps1";mkdir $p -force >$null;iwr -useb https://ndemou.github.io/scripts/$f -out $p\$f; . $p\$f
 
 Then repeat these steps:
   1. Copy code from the LLM
@@ -530,7 +530,7 @@ if ($isDotSourced) {
         Write-SctConsoleDirect -Message "2. Run q" -Color Green
         Write-SctConsoleDirect -Message "3. The command output will also be copied to the clipboard." -Color Green
         Write-SctConsoleDirect -Message "You can also run ccc manually to copy the current transcript chunk." -Color Green
-        Write-SctConsoleDirect -Message "CAUTION: Some rare legacy tools write directly to the console and may bypass the transcript." -Color Yellow
+        Write-SctConsoleDirect -Message "NOTE: Some rare legacy tools may bypass the transcript." -Color Green
     } else {
         Write-SctConsoleDirect -Message "Helpers are already loaded. Alias 'q' points to Invoke-CommandFromClipboard." -Color Yellow
         Write-SctConsoleDirect -Message "Current chunk transcript: $transcriptPath" -Color DarkGray
