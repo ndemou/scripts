@@ -66,6 +66,21 @@ h1, h2 {
   white-space: normal;
 }
 
+.detail-directive {
+  font-weight: 700;
+}
+
+.function-list {
+  margin: 8px 0 0;
+  padding-left: 26px;
+  color: #3d444d;
+  font: 14px/1.55 Consolas, "Courier New", monospace;
+}
+
+.function-list li + li {
+  margin-top: 4px;
+}
+
 a {
   color: #0969da;
   text-decoration: none;

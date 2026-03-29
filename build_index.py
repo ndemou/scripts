@@ -16,6 +16,7 @@ FUNCTION_HEADER_RE = re.compile(
     r"^\s*(function|filter)\b|^\s*\[[A-Za-z][^\]]*\]\s*$|^\s*param\s*\(|^\s*{\s*$",
     re.IGNORECASE,
 )
+FUNCTION_NAME_RE = re.compile(r"^\s*(?:function|filter)\s+([A-Za-z_][\w-]*)\s*(?:\(|\{|$)", re.IGNORECASE)
 
 
 @dataclass
@@ -23,6 +24,13 @@ class ScriptDoc:
     path: Path
     synopsis: str | None
     details: str | None
+    function_docs: list[FunctionDoc] | None = None
+
+
+@dataclass
+class FunctionDoc:
+    name: str
+    synopsis: str | None
 
 
 def normalize_comment_lines(lines: list[str]) -> list[str]:
@@ -160,6 +168,89 @@ def cleanup_details(details: str | None) -> str | None:
     return cleaned or None
 
 
+def extract_explicit_synopsis(comment_lines: list[str]) -> str | None:
+    for i, line in enumerate(comment_lines):
+        if re.match(r"^\s*\.SYN(?:O|OS)PSIS\s*$", line, re.IGNORECASE):
+            synopsis_lines: list[str] = []
+            j = i + 1
+            while j < len(comment_lines):
+                if HELP_DIRECTIVE_RE.match(comment_lines[j]):
+                    break
+                synopsis_lines.append(comment_lines[j])
+                j += 1
+            return "\n".join(synopsis_lines).strip() or None
+    return None
+
+
+def extract_function_docs(text: str) -> list[FunctionDoc]:
+    lines = text.splitlines()
+    docs: list[FunctionDoc] = []
+    i = 0
+    block_comment = False
+    brace_depth = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if block_comment:
+            if "#>" in line:
+                block_comment = False
+            i += 1
+            continue
+
+        if stripped.startswith("<#"):
+            if "#>" not in line:
+                block_comment = True
+            i += 1
+            continue
+        if stripped.startswith("#"):
+            i += 1
+            continue
+
+        match = FUNCTION_NAME_RE.match(line) if brace_depth == 0 else None
+
+        if match:
+            name = match.group(1)
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+
+            synopsis = None
+            if j < len(lines) and lines[j].strip().startswith("<#"):
+                block: list[str] = []
+                while j < len(lines):
+                    block.append(lines[j])
+                    if "#>" in lines[j]:
+                        break
+                    j += 1
+                comment_lines = strip_block_comment_markers(block)
+                synopsis = extract_explicit_synopsis(comment_lines)
+
+            docs.append(FunctionDoc(name=name, synopsis=synopsis))
+
+        brace_depth += line.count("{") - line.count("}")
+        if brace_depth < 0:
+            brace_depth = 0
+        i += 1
+
+    return docs
+
+
+def extract_helper_function_docs(synopsis: str | None, details: str | None, text: str, extension: str) -> list[FunctionDoc] | None:
+    if extension != ".ps1" or details:
+        return None
+    if not synopsis:
+        return None
+
+    summary_lines = [line.strip() for line in synopsis.splitlines() if line.strip()]
+    if len(summary_lines) != 1 or "helper functions" not in summary_lines[0].lower():
+        return None
+
+    function_docs = extract_function_docs(text)
+    return function_docs or None
+
+
 def read_script_doc(path: Path) -> ScriptDoc:
     text = None
     for encoding in ("utf-8", "utf-8-sig", "cp1252"):
@@ -173,18 +264,49 @@ def read_script_doc(path: Path) -> ScriptDoc:
 
     comment_lines = extract_comment_block(text, path.suffix.lower())
     synopsis, details = extract_synopsis(comment_lines)
-    return ScriptDoc(path=path, synopsis=synopsis, details=cleanup_details(details))
+    details = cleanup_details(details)
+    function_docs = extract_helper_function_docs(synopsis, details, text, path.suffix.lower())
+    return ScriptDoc(path=path, synopsis=synopsis, details=details, function_docs=function_docs)
 
 
-def render_text_block(text: str, css_class: str) -> str:
+def render_text_block(text: str, css_class: str, bold_directives: bool = False) -> str:
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text.strip()) if part.strip()]
     if not paragraphs:
         return ""
+
+    def render_line(line: str) -> str:
+        escaped = html.escape(line)
+        if bold_directives and re.match(r"^[.][A-Z]+ *$", line.strip()):
+            return f'<span class="detail-directive">{escaped}</span>'
+        return escaped
+
     body = "\n".join(
-        f'          <p class="{css_class}">{html.escape(paragraph).replace(chr(10), "<br>")}</p>'
+        f'          <p class="{css_class}">{"<br>".join(render_line(line) for line in paragraph.splitlines())}</p>'
         for paragraph in paragraphs
     )
     return body
+
+
+def render_function_docs(function_docs: list[FunctionDoc]) -> str:
+    items = []
+    for function_doc in function_docs:
+        item = f"<strong>{html.escape(function_doc.name)}</strong>"
+        if function_doc.synopsis:
+            synopsis = html.escape(" ".join(part.strip() for part in function_doc.synopsis.splitlines() if part.strip()))
+            item += f": {synopsis}"
+        items.append(f"            <li>{item}</li>")
+
+    return "\n".join(
+        [
+            "        <details class=\"script-details\">",
+            "          <summary>Read more</summary>",
+            "          <div class=\"script-details-text\">Functions:</div>",
+            "          <ul class=\"function-list\">",
+            *items,
+            "          </ul>",
+            "        </details>",
+        ]
+    )
 
 
 def render_item(doc: ScriptDoc) -> str:
@@ -202,10 +324,12 @@ def render_item(doc: ScriptDoc) -> str:
             [
                 "        <details class=\"script-details\">",
                 "          <summary>Read more</summary>",
-                render_text_block(doc.details, "script-details-text"),
+                render_text_block(doc.details, "script-details-text", bold_directives=True),
                 "        </details>",
             ]
         )
+    elif doc.function_docs:
+        parts.append(render_function_docs(doc.function_docs))
 
     parts.append("      </li>")
     return "\n".join(part for part in parts if part)

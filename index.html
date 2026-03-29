@@ -24,11 +24,11 @@
           <p class="script-details-text">The function is designed for very large trees. It streams matches as they are found instead of accumulating all results in memory.<br>Use -PassThru to emit one result object per matched item. Without -PassThru it emits only a final summary object.</p>
           <p class="script-details-text">safe-temp-files deletes:<br>- *.tmp files older than 30 days<br>- Office temp files (~$*.??? and ~$*.????)</p>
           <p class="script-details-text">DANGEROUS-broad-temp-cache-logs expands matching to broad generic temp/cache/log locations and broad *.log / *.tmp file cleanup.</p>
-          <p class="script-details-text">.EXAMPLE<br>Clear-DiskJunk -Path D:\MountedDisk -WhatIf</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Clear-DiskJunk -Path D:\MountedDisk -WhatIf</p>
           <p class="script-details-text">Shows what would be deleted using the conservative default categories.</p>
-          <p class="script-details-text">.EXAMPLE<br>Clear-DiskJunk -Path D:\MountedDisk -IncludeCategory browser-caches,DANGEROUS-broad-temp-cache-logs -Confirm</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Clear-DiskJunk -Path D:\MountedDisk -IncludeCategory browser-caches,DANGEROUS-broad-temp-cache-logs -Confirm</p>
           <p class="script-details-text">Prompts before deleting and includes the dangerous broad cleanup category.</p>
-          <p class="script-details-text">.EXAMPLE<br>Clear-DiskJunk -Path D:\MountedDisk -ExcludePath &#x27;D:\MountedDisk\Users\Nick\AppData\Local\Google\*&#x27; -PassThru |<br>Export-Csv C:\temp\diskjunk-results.csv -NoTypeInformation</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Clear-DiskJunk -Path D:\MountedDisk -ExcludePath &#x27;D:\MountedDisk\Users\Nick\AppData\Local\Google\*&#x27; -PassThru |<br>Export-Csv C:\temp\diskjunk-results.csv -NoTypeInformation</p>
           <p class="script-details-text">Streams one result object per matched item and saves them.</p>
           <p class="script-details-text">.PARAMETER Path<br>Root path to scan.</p>
           <p class="script-details-text">.PARAMETER IncludeCategory<br>Cleanup categories to include.</p>
@@ -37,9 +37,9 @@
           <p class="script-details-text">.PARAMETER ExcludePath<br>Paths or wildcard patterns to exclude. Matches are tested against both full Windows paths and root-relative forward-slash paths.</p>
           <p class="script-details-text">.PARAMETER TmpOlderThanDays<br>Age threshold for *.tmp deletion in the safe-temp-files category. Default is 30.</p>
           <p class="script-details-text">.PARAMETER PassThru<br>Emits one object per matched item as it is processed. Useful for logging and large-scale runs.</p>
-          <p class="script-details-text">.OUTPUTS<br>Without -PassThru:<br>A summary object.</p>
+          <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Without -PassThru:<br>A summary object.</p>
           <p class="script-details-text">With -PassThru:<br>One result object per matched item, followed by a final summary object.</p>
-          <p class="script-details-text">.NOTES<br>- Supports -WhatIf and -Confirm.<br>- Intended primarily for copies of Windows disks, not live system cleanup.<br>- Broad cleanup can remove data you may later want for troubleshooting or forensics.</p>
+          <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>- Supports -WhatIf and -Confirm.<br>- Intended primarily for copies of Windows disks, not live system cleanup.<br>- Broad cleanup can remove data you may later want for troubleshooting or forensics.</p>
         </details>
       </li>
       <li class="script-item">
@@ -48,21 +48,52 @@
         <details class="script-details">
           <summary>Read more</summary>
           <p class="script-details-text">Use this for first-pass reboot and shutdown triage. It helps answer<br>whether a recent restart was clean, unexpected, crash-related, planned<br>by an administrator or process, or associated with Windows Updates.</p>
-          <p class="script-details-text">.OUTPUTS<br>Produces one PSCustomObject per matching event:<br>Level       : Event level text.<br>Time        : Event time.<br>Kind        : Event category. One of:<br>Boot, NormalShutdown, PlannedShutdownOrRestart,<br>WindowsUpdatesInstallStarted, WindowsUpdatesInstallCompleted,<br>WindowsUpdatesRestartRequired, WindowsUpdatesRestart<br>BugCheck, CrashDump, AbnormalShutdown,<br>UnexpectedShutdownFollowup, Other<br>Description : First line of the event message with source metadata<br>appended as &quot;(id &lt;n&gt; from &lt;provider&gt;)&quot;.</p>
+          <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Produces one PSCustomObject per matching event:<br>Level       : Event level text.<br>Time        : Event time.<br>Kind        : Event category. One of:<br>Boot, NormalShutdown, PlannedShutdownOrRestart,<br>WindowsUpdatesInstallStarted, WindowsUpdatesInstallCompleted,<br>WindowsUpdatesRestartRequired, WindowsUpdatesRestart<br>BugCheck, CrashDump, AbnormalShutdown,<br>UnexpectedShutdownFollowup, Other<br>Description : First line of the event message with source metadata<br>appended as &quot;(id &lt;n&gt; from &lt;provider&gt;)&quot;.</p>
           <p class="script-details-text">Intentionally excludes noise about Microsoft Defender updates.</p>
         </details>
       </li>
       <li class="script-item">
         <a class="script-link" href="helpers-DCs.ps1">helpers-DCs.ps1</a>
           <p class="script-synopsis">A collection of helper functions for Domain Controllers</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <div class="script-details-text">Functions:</div>
+          <ul class="function-list">
+            <li><strong>Search-ADUserAnyProperty</strong>: Search Active Directory users by a pattern across multiple common attributes.</li>
+          </ul>
+        </details>
       </li>
       <li class="script-item">
         <a class="script-link" href="helpers-networking.ps1">helpers-networking.ps1</a>
           <p class="script-synopsis">A collection of helper functions for Networking</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <div class="script-details-text">Functions:</div>
+          <ul class="function-list">
+            <li><strong>Test-IpReachability</strong>: Probe point-in-time ICMP reachability for one or more IP targets.</li>
+            <li><strong>Test-TcpPort</strong>: Quickly tests whether a TCP connection can be established.</li>
+            <li><strong>Test-NetConnectivityToHost</strong></li>
+            <li><strong>Split-IpByReachability</strong>: Splits input IPs into Alive vs NotAlive based on whether they respond to pings</li>
+            <li><strong>Test-NetConnectivityToNetwork</strong>: Assesses reachability of a network by pinging a list of hosts that are known to reply.</li>
+            <li><strong>Test-ShareLikelyUp</strong>: QUICKLY tests whether the host of a UNC share is LIKELY reachable over SMB.</li>
+          </ul>
+        </details>
       </li>
       <li class="script-item">
         <a class="script-link" href="helpers-processes.ps1">helpers-processes.ps1</a>
           <p class="script-synopsis">A collection of helper functions for Processes &amp; Tasks</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <div class="script-details-text">Functions:</div>
+          <ul class="function-list">
+            <li><strong>Quote-Win32Arg</strong></li>
+            <li><strong>Join-Win32CommandLine</strong></li>
+            <li><strong>New-ScheduledTaskForPSScript</strong>: Registers a Windows Scheduled Task that runs a PowerShell script as SYSTEM.</li>
+            <li><strong>Invoke-DetachedPSScript</strong>: Executes a PowerShell script on a remote host as a detached process without leaving a disconnected session after execution completes.</li>
+            <li><strong>Get-ProcessesWithMatchingCommandLine</strong></li>
+            <li><strong>Test-ExeFound</strong></li>
+          </ul>
+        </details>
       </li>
       <li class="script-item">
         <a class="script-link" href="helpers-text-files.ps1">helpers-text-files.ps1</a>
@@ -84,7 +115,7 @@
           <p class="script-details-text">.PARAMETER MinFreeSystemGB<br>Minimum free GB on system drive before running heavy servicing (default 4GB).</p>
           <p class="script-details-text">.PARAMETER MinFreeScratchGB<br>Minimum free GB on ScratchDirectory if provided. (default 4GB)</p>
           <p class="script-details-text">.PARAMETER LimitAccess<br>Use only -Source and avoid Windows Update (WU/WSUS). Use this along with -Source. PREFER TO AVOID THIS OPTION.</p>
-          <p class="script-details-text">.EXAMPLE<br>.\Run-DismSfc.ps1 -Source &#x27;WIM:D:\sources\install.wim:1&#x27;</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Run-DismSfc.ps1 -Source &#x27;WIM:D:\sources\install.wim:1&#x27;</p>
         </details>
       </li>
       <li class="script-item">
@@ -102,9 +133,9 @@
           <p class="script-synopsis">Prints a detailed warning every time it finds RAM, CPU or Disks are stressed</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">.EXAMPLE<br>C:&gt; c:\it\bin\Test-ForCpuRamDiskStress.ps1 | Tee-Object &quot;C:\it\temp\CpuRamDiskStress.log&quot;</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>C:&gt; c:\it\bin\Test-ForCpuRamDiskStress.ps1 | Tee-Object &quot;C:\it\temp\CpuRamDiskStress.log&quot;</p>
           <p class="script-details-text">20:12:47 HIGH &lt;HOSTNAME&gt; Reasons:<br>- Available memory minimum 0,5% is below the 5% threshold while average Page Reads/sec is  319, above the 150 threshold. Low headroom with active hard faults indicates real stress.<br>- High classification gate satisfied: Available memory(%) minimum 0,5 is below the 10% gate threshold.<br>Measurements:<br>- Time window: 18 secs (9 samples)<br>- Available memory: average 68,3%, minimum 0,5%<br>- Committed memory: average 31,9%, maximum 67,0%<br>- Paging file usage: maximum 73%<br>- Page Reads/sec (hard faults): average 319, maximum 1.789<br>- Page Writes/sec: average 23, maximum 203<br>- Transition Faults/sec: average 1.281, maximum 6.797<br>- Disk read latency: average 0,0 ms<br>- Disk write latency: average 0,0 ms<br>- Disk queue length: average 7,3<br>- Standby cache memory: Normal 58 MB, Reserve 222 MB, Core 0 MB<br>- File cache memory: 4 MB<br>- Modified page list: 134 MB<br>- Compressed memory: 0 MB</p>
-          <p class="script-details-text">.DESCRIPTION<br>There are two modes of operation: monitoring and log file analysis.</p>
+          <p class="script-details-text"><span class="detail-directive">.DESCRIPTION</span><br>There are two modes of operation: monitoring and log file analysis.</p>
           <p class="script-details-text">In monitor mode (the default) it prints a detailed warning every<br>time it finds RAM, CPU or Disks are stressed.</p>
           <p class="script-details-text">In monitor mode these switches may be used.<br>-MonitorVolumes:   Will also monitor IO stress of Volumes<br>-DontMonitorDisks: Will NOT monitor  IO stress of disks</p>
           <p class="script-details-text">In log analysis (invoked if you supply a -LogFile) it creates a<br>summary report based on the contents of the log file.</p>
@@ -142,7 +173,7 @@
           <p class="script-details-text">.PARAMETER ListRecentLogs<br>List this script&#x27;s log files and exit. Returns FileInfo objects sorted by LastWriteTime (oldest -&gt; newest; most recent last).<br>By default it returns the most recent 10 log files.</p>
           <p class="script-details-text">.PARAMETER ListAll<br>Used only with -ListRecentLogs. If specified, returns all log files that can be found (instead of only the most recent 10).</p>
           <p class="script-details-text">.PARAMETER InstallOptional<br>Installs an optional update (needs the update ID)</p>
-          <p class="script-details-text">.EXAMPLE<br>Install any already downloaded updates and reboot if needed:<br>.\WindowsUpdatesHelper.ps1 -Reboot</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Install any already downloaded updates and reboot if needed:<br>.\WindowsUpdatesHelper.ps1 -Reboot</p>
           <p class="script-details-text">Download, Install and if needed reboot:<br>.\WindowsUpdatesHelper.ps1 -Download -Reboot</p>
           <p class="script-details-text">Download, Install and reboot regardless of whether updates require it:<br>.\WindowsUpdatesHelper.ps1 -Download -Reboot -RebootAnyway</p>
           <p class="script-details-text">Show latest Windows Update history entries:<br>.\WindowsUpdatesHelper.ps1 -ShowHistory</p>
