@@ -1,8 +1,6 @@
-##############################################################
-#
-# A collection of helper functions for handling text files
-#
-##############################################################
+<#
+A collection of helper functions for handling text files
+#>
 
 # ----------------------------------------------------
 # For Edit-TextFile and Get-TextFileEncoding on PS 7 CoreLib
