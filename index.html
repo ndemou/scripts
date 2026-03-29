@@ -14,11 +14,11 @@
     <h2>Available downloads</h2>
     <ul class="script-list">
       <li class="script-item">
-        <a class="script-link" href="./Clear-DiskJunk.ps1">Clear-DiskJunk.ps1</a>
+        <a class="script-link" href="Clear-DiskJunk.ps1">Clear-DiskJunk.ps1</a>
           <p class="script-synopsis">Deletes selected junk files and directories from a copied disk tree, with conservative defaults and full WhatIf/Confirm support.</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">.DESCRIPTION<br>Clear-DiskJunk scans a target path and removes only the junk categories you explicitly allow.</p>
+          <p class="script-details-text">Clear-DiskJunk scans a target path and removes only the junk categories you explicitly allow.</p>
           <p class="script-details-text">By default it runs in conservative mode and targets:<br>- browser-caches<br>- safe-temp-files</p>
           <p class="script-details-text">Conservative mode avoids deleting generic directory names such as cache, temp, log, or logs unless you explicitly include<br>DANGEROUS-broad-temp-cache-logs.</p>
           <p class="script-details-text">The function is designed for very large trees. It streams matches as they are found instead of accumulating all results in memory.<br>Use -PassThru to emit one result object per matched item. Without -PassThru it emits only a final summary object.</p>
@@ -43,40 +43,40 @@
         </details>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./Get-BootShutdownEvents.ps1">Get-BootShutdownEvents.ps1</a>
+        <a class="script-link" href="Get-BootShutdownEvents.ps1">Get-BootShutdownEvents.ps1</a>
           <p class="script-synopsis">Shows a compact, admin-friendly timeline of recent boots, shutdowns,<br>crashes, and update-related restart signals from the System log.</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">.DESCRIPTION<br>Use this for first-pass reboot and shutdown triage. It helps answer<br>whether a recent restart was clean, unexpected, crash-related, planned<br>by an administrator or process, or associated with Windows Updates.</p>
+          <p class="script-details-text">Use this for first-pass reboot and shutdown triage. It helps answer<br>whether a recent restart was clean, unexpected, crash-related, planned<br>by an administrator or process, or associated with Windows Updates.</p>
           <p class="script-details-text">.OUTPUTS<br>Produces one PSCustomObject per matching event:<br>Level       : Event level text.<br>Time        : Event time.<br>Kind        : Event category. One of:<br>Boot, NormalShutdown, PlannedShutdownOrRestart,<br>WindowsUpdatesInstallStarted, WindowsUpdatesInstallCompleted,<br>WindowsUpdatesRestartRequired, WindowsUpdatesRestart<br>BugCheck, CrashDump, AbnormalShutdown,<br>UnexpectedShutdownFollowup, Other<br>Description : First line of the event message with source metadata<br>appended as &quot;(id &lt;n&gt; from &lt;provider&gt;)&quot;.</p>
           <p class="script-details-text">Intentionally excludes noise about Microsoft Defender updates.</p>
         </details>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./helpers-DCs.ps1">helpers-DCs.ps1</a>
+        <a class="script-link" href="helpers-DCs.ps1">helpers-DCs.ps1</a>
           <p class="script-synopsis">A collection of helper functions for Domain Controllers</p>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./helpers-networking.ps1">helpers-networking.ps1</a>
+        <a class="script-link" href="helpers-networking.ps1">helpers-networking.ps1</a>
           <p class="script-synopsis">A collection of helper functions for Networking</p>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./helpers-processes.ps1">helpers-processes.ps1</a>
+        <a class="script-link" href="helpers-processes.ps1">helpers-processes.ps1</a>
           <p class="script-synopsis">A collection of helper functions for Processes &amp; Tasks</p>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./helpers-text-files.ps1">helpers-text-files.ps1</a>
+        <a class="script-link" href="helpers-text-files.ps1">helpers-text-files.ps1</a>
           <p class="script-synopsis">A collection of helper functions for handling text files</p>
           <p class="script-synopsis">For Edit-TextFile and Get-TextFileEncoding on PS 7 CoreLib</p>
           <p class="script-synopsis">[System.Text.Encoding]::GetEncoding(1252) or &#x27;iso-8859-1&#x27; will not work in PowerShell 7 (only UTF encodings are available by default).</p>
           <p class="script-synopsis">The following code will try to register the CodePagesEncodingProvider so legacy<br>encodings like windows-1252 / iso-8859-1 are available via<br>[Text.Encoding]::GetEncoding().</p>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./Run-DismSfc.ps1">Run-DismSfc.ps1</a>
+        <a class="script-link" href="Run-DismSfc.ps1">Run-DismSfc.ps1</a>
           <p class="script-synopsis">Safe* and automatic DISM + SFC repairs made easy.</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">.DESCRIPTION<br>Runs CHKDSK, DISM(CheckHealth/RestoreHealth) and SFC with preflight checks, concise console output, and logging.<br>Designed to minimize risk* and be thourough.</p>
+          <p class="script-details-text">Runs CHKDSK, DISM(CheckHealth/RestoreHealth) and SFC with preflight checks, concise console output, and logging.<br>Designed to minimize risk* and be thourough.</p>
           <p class="script-details-text">*: REGARDING SAFETY</p>
           <p class="script-details-text">This script is safe to run on Windows installations with no weird customizations,<br>Don&#x27;t use it on boxes with OEM-customized, but still WRP-protected components,<br>or older apps that replace protected system binaries.</p>
           <p class="script-details-text">.PARAMETER Source<br>Optional, one or more DISM sources, e.g. &#x27;WIM:D:\sources\install.wim:1&#x27;,&#x27;ESD:E:\sources\install.esd:6&#x27;.</p>
@@ -88,17 +88,17 @@
         </details>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./Start-Copy4Toula.ps1">Start-Copy4Toula.ps1</a>
+        <a class="script-link" href="Start-Copy4Toula.ps1">Start-Copy4Toula.ps1</a>
           <p class="script-synopsis">Initializes a session transcript and provides a command to quickly copy recent output.</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">.DESCRIPTION<br>When dot-sourced, this script starts a PowerShell transcript tied to the current<br>process ID (PID) and injects a global function called &#x27;ccc&#x27;.<br>Running &#x27;ccc&#x27; reads the current transcript file, appends it to a &#x27;.full.txt&#x27; log,<br>cleans it for readability, copies the clean text to your clipboard and restarts<br>the transcript. So every time you run ccc you get the transcript since last time<br>you called ccc.</p>
+          <p class="script-details-text">When dot-sourced, this script starts a PowerShell transcript tied to the current<br>process ID (PID) and injects a global function called &#x27;ccc&#x27;.<br>Running &#x27;ccc&#x27; reads the current transcript file, appends it to a &#x27;.full.txt&#x27; log,<br>cleans it for readability, copies the clean text to your clipboard and restarts<br>the transcript. So every time you run ccc you get the transcript since last time<br>you called ccc.</p>
           <p class="script-details-text">*** IMPORTANT: THIS IS NOT THE SAME THING AS COPYING FROM YOUR TERMINAL ***<br>Because this tool relies on PowerShell&#x27;s Start-Transcript engine, it captures<br>data streams rather than screen rendering. This causes a few notable differences:</p>
           <p class="script-details-text">* Native Executables: Some legacy or external CLI tools (e.g. RUNAS) write directly<br>to the console screen buffer, completely bypassing the transcript data stream.<br>* Phantom Errors: The engine captures raw parsing hiccups (like the split-second<br>before you finish a multiline command), though &#x27;ccc&#x27; attempts to sanitize these.<br>* Interactive UI: Dynamic elements like progress bars (Write-Progress),<br>choice menus, or Read-Host inputs either do not log or log as messy text.</p>
         </details>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./Test-ForCpuRamDiskStress.ps1">Test-ForCpuRamDiskStress.ps1</a>
+        <a class="script-link" href="Test-ForCpuRamDiskStress.ps1">Test-ForCpuRamDiskStress.ps1</a>
           <p class="script-synopsis">Prints a detailed warning every time it finds RAM, CPU or Disks are stressed</p>
         <details class="script-details">
           <summary>Read more</summary>
@@ -112,11 +112,10 @@
         </details>
       </li>
       <li class="script-item">
-        <a class="script-link" href="./WindowsUpdatesHelper.ps1">WindowsUpdatesHelper.ps1</a>
+        <a class="script-link" href="WindowsUpdatesHelper.ps1">WindowsUpdatesHelper.ps1</a>
           <p class="script-synopsis">Installs Windows Updates using the supported WUA COM API, with optional download, controlled reboot (now or scheduled), and detailed logging.</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">.DESCRIPTION</p>
           <p class="script-details-text">SPECIAL SHOW UPDATE HISTORY MODE<br>If -ShowHistory is used, the script does NOT install/download/reboot.<br>Instead it queries Windows Update history (same source as the GUI &quot;View update history&quot;),<br>optionally filtered, and then exits.</p>
           <p class="script-details-text">NORMAL INSTALL UPDATES MODE<br>By default(without -ShowHistory) it installs Windows updates like this:<br>- Installs already downloaded updates if any.<br>- With -Download, will also download all required updates.<br>- With -Reboot, will reboot after installation if needed (or regardless with -RebootAnyway).</p>
           <p class="script-details-text">Batches &quot;normal&quot; updates together; installs &quot;exclusive&quot; updates one-by-one; accepts EULAs.</p>

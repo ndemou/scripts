@@ -20,7 +20,9 @@ h1, h2 {
 }
 
 .script-list {
-  padding-left: 20px;
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
 }
 
 .script-item + .script-item {
@@ -29,6 +31,7 @@ h1, h2 {
 
 .script-link {
   font-weight: 600;
+  font-size: 1.15rem;
 }
 
 .script-synopsis,
@@ -39,6 +42,10 @@ h1, h2 {
 
 .script-details {
   margin-top: 8px;
+  padding: 10px 12px 12px;
+  background: #f6f8fa;
+  border: 1px solid #d8dee4;
+  border-radius: 10px;
 }
 
 .script-details summary {
@@ -49,6 +56,14 @@ h1, h2 {
 
 .script-details[open] summary {
   margin-bottom: 8px;
+}
+
+.script-details-text {
+  font: 14px/1.55 Consolas, "Courier New", monospace;
+  background: #eef2f7;
+  border-radius: 8px;
+  padding: 8px 10px;
+  white-space: normal;
 }
 
 a {

@@ -144,6 +144,22 @@ def extract_synopsis(comment_lines: list[str]) -> tuple[str | None, str | None]:
     return synopsis, details
 
 
+def cleanup_details(details: str | None) -> str | None:
+    if not details:
+        return None
+
+    lines = details.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if lines and re.match(r"^\s*\.DESCRIPTION\s*$", lines[0], re.IGNORECASE):
+        lines.pop(0)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    cleaned = "\n".join(lines).strip()
+    return cleaned or None
+
+
 def read_script_doc(path: Path) -> ScriptDoc:
     text = None
     for encoding in ("utf-8", "utf-8-sig", "cp1252"):
@@ -157,7 +173,7 @@ def read_script_doc(path: Path) -> ScriptDoc:
 
     comment_lines = extract_comment_block(text, path.suffix.lower())
     synopsis, details = extract_synopsis(comment_lines)
-    return ScriptDoc(path=path, synopsis=synopsis, details=details)
+    return ScriptDoc(path=path, synopsis=synopsis, details=cleanup_details(details))
 
 
 def render_text_block(text: str, css_class: str) -> str:
@@ -175,7 +191,7 @@ def render_item(doc: ScriptDoc) -> str:
     relative_path = doc.path.relative_to(ROOT).as_posix()
     parts = [
         "      <li class=\"script-item\">",
-        f'        <a class="script-link" href="./{html.escape(relative_path)}">{html.escape(relative_path)}</a>',
+        f'        <a class="script-link" href="{html.escape(relative_path)}">{html.escape(relative_path)}</a>',
     ]
 
     if doc.synopsis:
