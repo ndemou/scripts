@@ -386,10 +386,7 @@ def build_html(docs: list[ScriptDoc]) -> str:
 </head>
 <body>
   <main class="card">
-    <h1>{html.escape(TITLE)}</h1>
-    <p>PowerShell and shell scripts published via GitHub Pages.</p>
-
-    <h2>Available downloads</h2>
+    <h1>Available scripts & functions</h2>
     <ul class="script-list">
 {items}
     </ul>
