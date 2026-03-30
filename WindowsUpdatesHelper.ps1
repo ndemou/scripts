@@ -4,45 +4,67 @@ Installs Windows Updates using the supported WUA COM API, with optional download
 
 .DESCRIPTION
 
-SPECIAL SHOW UPDATE HISTORY MODE
----------------------------------
+# SPECIAL SHOW UPDATE HISTORY MODE
+
 If -ShowHistory is used, the script does NOT install/download/reboot.
 Instead it queries Windows Update history (same source as the GUI "View update history"),
 optionally filtered, and then exits.
 
-NORMAL INSTALL UPDATES MODE
-----------------------------
+# NORMAL INSTALL UPDATES MODE
+
 By default(without -ShowHistory) it installs Windows updates like this:
-- Installs already downloaded updates if any.
-- With -Download, will also download all required updates.
-- With -Reboot, will reboot after installation if needed (or regardless with -RebootAnyway).
+ - Installs already downloaded updates if any.
+ - With -Download, will also download all required updates.
+ - With -Reboot, will reboot after installation if needed (or regardless with -RebootAnyway).
 
 Batches "normal" updates together; installs "exclusive" updates one-by-one; accepts EULAs.
 
-Robustness:
-Service start is retried up to 3x with exponential delays (5s, 10s, 20s) before failing.
-
-Pending reboot detection uses WU `RebootRequired` and CBS `RebootPending`.
-
-Post-download refresh search has a catch/fallback: if the refresh search throws, proceeds using the initial search results (with a warning).
-
-Uses only supported, inbox components (no extra modules, no `UsoClient`, PS 5.1-safe syntax).
-
-Reboot is first tried without /f and after a few minutes with /f.
+## Regarding Robustness
+ - Service start is retried up to 3x with exponential delays (5s, 10s, 20s) before failing.
+ - Pending reboot detection uses WU `RebootRequired` and CBS `RebootPending`.
+ - Post-download refresh search has a catch/fallback: if the refresh search throws, proceeds using the initial search results (with a warning).
+ - Uses only supported, inbox components (no extra modules, no `UsoClient`, PS 5.1-safe syntax).
+ - Reboot is first tried without /f and after a few minutes with /f.
 
 If an update (e.g. Servicing Stack) installs and immediately requires a reboot; subsequent updates will fail with 0x80240030 until reboot. If such failures are detected and the script was run with -Reboot or -RebootAnyway,
   the script will ensure continuation of installations after the reboot like this:
   - Create a temporary scheduled task that runs this script again
     at startup with -XXX_ResumeAfterReboot.
-- On that second automated run with -XXX_ResumeAfterReboot:
-  - The startup task is removed and the script continues as normal (install + maybe reboot).
+  - On that second automated run with -XXX_ResumeAfterReboot: The startup 
+    task is removed and the script continues as normal (install + maybe reboot).
 
-Logging:
-- Logs everything to WindowsUpdateHelper-YYYY-MM-DD.log
+## Logging
+Logs everything to `WindowsUpdateHelper-YYYY-MM-DD.log`
   1. If C:\IT\LOG exists, log is created there.
   2. Else if C:\IT\LOGS exists, there.
   3. Else in the system temp folder.
 
+.EXAMPLE
+The fastest way to bring a new installation up-to-date:
+**CAUTION**: WILL REBOOT WITHOUT WAITING / WITHOUT ASKING
+```
+# Download & first run 
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Unrestricted -Force
+$p="C:\it\bin";mkdir $p -force >$null
+$f="WindowsUpdatesHelper.ps1";iwr -useb https://wiki.enlogic.gr/pub/KnowledgeBase/PublicFiles/$f -OutFile $p\$f
+& C:\it\bin\WindowsUpdatesHelper.ps1 -Download -Reboot 
+
+# 2nd Run (REPEAT UNTIL YOU GET 0 Updates Found)
+& c:\it\bin\WindowsUpdatesHelper.ps1 -Download -Reboot -Interactive 
+# It will also install updates that MAY ask you to accept EULAs or make choices
+```
+.EXAMPLE
+# Display the logs from the last 10 executions of this script
+& c:\it\bin\WindowsUpdatesHelper.ps1 -ListRecentLogs | %{cat $_.fullname|sls -NotMatch '^(Machine|Host Application|Process ID|Log file|Configuration Name|Username|End time|[A-Z][a-z]*(Versions?|Edition)): '} 
+
+.EXAMPLE
+**CAUTION**: An unfortunate side-effect of this script is that the updates
+it installs are not visible in the GUI (Settings -> Windows Updates). 
+The only way to view them:
+```
+& c:\it\bin\WindowsUpdatesHelper.ps1 -ShowHistory | ft 
+# You may add -IncludeAV if you want to also view (the very frequent) Antivirus udpates
+```
 
 .PARAMETER Download
 Perform online scan and download applicable updates that are not yet downloaded, then proceed to install everything downloaded.
@@ -101,18 +123,23 @@ Installs an optional update (needs the update ID)
 # Install any already downloaded updates and reboot if needed:
 .\WindowsUpdatesHelper.ps1 -Reboot
 
+.EXAMPLE
 # Download, Install and if needed reboot:
 .\WindowsUpdatesHelper.ps1 -Download -Reboot
 
+.EXAMPLE
 # Download, Install and reboot regardless of whether updates require it:
 .\WindowsUpdatesHelper.ps1 -Download -Reboot -RebootAnyway
 
+.EXAMPLE
 # Show latest Windows Update history entries:
 .\WindowsUpdatesHelper.ps1 -ShowHistory
 
+.EXAMPLE
 # Show latest Windows Update history entries, include AV updates:
 .\WindowsUpdatesHelper.ps1 -ShowHistory -LastDays 14 -IncludeAV
 
+.EXAMPLE
 # List the most recent 10 log files created by this script (most recent last):
 .\WindowsUpdatesHelper.ps1 -ListRecentLogs
 #>
