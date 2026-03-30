@@ -27,9 +27,10 @@ try{
 # END: For Edit-TextFile and Get-TextFileEncoding on PS 7 CoreLib
 # ----------------------------------------------------
 
-# ================================
+#####################################
+#
 # Edit-TextFile helpers (internal)
-# ================================
+#
 
 <# Normalizes -Backup into a suffix string like '.bak' or $null; empty/whitespace means "no kept backup". #>
 function _Etf_NormalizeBackupSuffix {
@@ -119,105 +120,10 @@ function _Etf_GetSwapPaths {
 
   [pscustomobject]@{ Tmp=$tmp; Bak=$bak; UserBackup=$userBackup }
 }
-
-function Replace-FileBytesSafely {
-<#
-.SYNOPSIS
-Replaces a file's contents with specified bytes, optionally retaining a backup.
-
-.DESCRIPTION
-  Behavior and guarantees:
-    - Writes the new content to -TmpPath first, then attempts to replace -ResolvedPath with it.
-    - Primary path uses [IO.File]::Replace(), which is the best option on local NTFS:
-        * Readers see either the old or the new file, not a partially-written file.
-        * A backup at -BakPath is created/overwritten as part of the replace.
-    - If Replace() fails (common on non-NTFS volumes, SMB shares with varying semantics, or transient locks
-      e.g. AV/OneDrive/indexing), it falls back to Copy-Item + Move-Item with best-effort rollback:
-        * This fallback is NOT atomic. It is provided for compatibility and "works in more places".
-        * If the move fails after the backup copy, the function attempts to restore from -BakPath.
-
-  Backup semantics:
-    - -BakPath is always used as the safety copy when swapping.
-    - If -UserBackup is $true, -BakPath is considered caller-visible and is preserved.
-    - If -UserBackup is $false, -BakPath is a transient safety backup and may be deleted on success.
-
-  Cleanup:
-    - Always attempts to delete -TmpPath in a finally block.
-    - Does not promise preservation of metadata/streams in the fallback path (ACLs, ADS, timestamps, etc.)
-      beyond what the underlying filesystem/provider naturally keeps.
-
-.PARAMETER ResolvedPath
-  The existing target file to be replaced (must be on the same volume as -TmpPath for best behavior).
-
-.PARAMETER TmpPath
-  A temp file path in the same directory as the target (recommended) containing the new bytes to commit.
-
-.PARAMETER BakPath
-  Path for the backup copy used during the swap. May be a user-requested backup (kept) or a transient one.
-
-.PARAMETER UserBackup
-  Indicates whether -BakPath is user-requested (keep it) or internal/transient (delete on success).
-
-.PARAMETER Bytes
-  The final bytes to be written/committed to the target file.
-
-.NOTES
-  - Intended for "in-place update" workflows: generate full new content, then commit in one swap.
-  - For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy
-    around the Replace() stage (if not implemented inside this function).
-#>
-  [CmdletBinding()] param(
-    [Parameter(Mandatory)][string]$ResolvedPath,
-    [Parameter(Mandatory)][string]$TmpPath,
-    [Parameter(Mandatory)][string]$BakPath,
-    [Parameter(Mandatory)][bool]$UserBackup,
-    [Parameter(Mandatory)][byte[]]$Bytes,
-    [int]$Retries=2,
-    [int]$RetryDelayMs=120,
-    [switch]$StrictAtomic
-  )
-
-  try {
-    [IO.File]::WriteAllBytes($TmpPath,$Bytes)
-
-    $replaced=$false
-    for($i=0;$i -le $Retries;$i++){
-      try{
-        if(Test-Path -LiteralPath $BakPath){ Remove-Item -LiteralPath $BakPath -Force -ErrorAction SilentlyContinue }
-        [IO.File]::Replace($TmpPath,$ResolvedPath,$BakPath,$true)
-        $replaced=$true
-        break
-      } catch [System.IO.IOException] {
-        if($i -lt $Retries){ Start-Sleep -Milliseconds $RetryDelayMs; continue }
-        break
-      } catch [System.UnauthorizedAccessException] {
-        if($i -lt $Retries){ Start-Sleep -Milliseconds $RetryDelayMs; continue }
-        break
-      }
-    }
-
-    if($replaced){
-      if(-not $UserBackup -and (Test-Path -LiteralPath $BakPath)){ Remove-Item -LiteralPath $BakPath -Force -ErrorAction SilentlyContinue }
-      return
-    }
-
-    if($StrictAtomic){ throw "Atomic replace failed (File.Replace) and StrictAtomic is set." }
-
-    Copy-Item -LiteralPath $ResolvedPath -Destination $BakPath -Force -ErrorAction Stop
-    try {
-      Move-Item -LiteralPath $TmpPath -Destination $ResolvedPath -Force -ErrorAction Stop
-      if(-not $UserBackup -and (Test-Path -LiteralPath $BakPath)){ Remove-Item -LiteralPath $BakPath -Force -ErrorAction SilentlyContinue }
-    } catch {
-      if(Test-Path -LiteralPath $BakPath){
-        Move-Item -LiteralPath $BakPath -Destination $ResolvedPath -Force -ErrorAction SilentlyContinue
-      }
-      throw
-    }
-
-  } finally {
-    if(Test-Path -LiteralPath $TmpPath){ Remove-Item -LiteralPath $TmpPath -Force -ErrorAction SilentlyContinue }
-  }
-}
+#
+# Edit-TextFile helpers (internal)
+#
+#####################################
 
 function Edit-TextFile {
 <#
@@ -563,37 +469,6 @@ Example:
   $PSCmdlet.WriteError($er)
 }
 
-function Read-FirstBytes {
-<#
-.SYNOPSIS
-Safe(shared) read of up to Count bytes from the start of a file.
-#>
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory)][IO.FileInfo]$File,
-    [Parameter(Mandatory)][int]$Count
-  )
-  $toRead = [math]::Min([int64]$Count, [int64]$File.Length)
-  $buf = New-Object byte[] $toRead
-  $fs  = [IO.File]::Open($File.FullName,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
-  try {
-    $offset = 0
-    while ($offset -lt $toRead) {
-      $n = $fs.Read($buf, $offset, $toRead - $offset)
-      if ($n -le 0) { break }
-      $offset += $n
-    }
-    if ($offset -lt $toRead) {
-      # shrink to actual bytes read
-      $shrink = New-Object byte[] $offset
-      [Array]::Copy($buf, 0, $shrink, 0, $offset)
-      $buf = $shrink
-    }
-  } finally { $fs.Dispose() }
-  [pscustomobject]@{ Buffer = $buf; BytesRead = [int]$buf.Length }
-}
-
-
 function _Get-FileBomFromPrefix {
 <#
 .SYNOPSIS
@@ -736,51 +611,81 @@ Classify a byte buffer sample as ASCII / NON-ASCII / BINARYorUTF1632 and infer l
   [pscustomobject]@{ Content=$content; LineTermination=$lt }
 }
 
-function Test-ExeFound {
-<#
-.SYNOPSIS
-Tests whether an executable can be resolved either as a full path or via PATH/PATHEXT.
+# ================================
+# Internal helpers for Get-TextFileEncoding
+# ================================
 
-.DESCRIPTION
-  Accepts either:
-    - A rooted path (e.g. C:\Tools\uchardet or C:\Tools\uchardet.exe), in which case it checks existence and,
-      if no extension was given, also tries common executable extensions (.exe/.cmd/.bat/.com).
-    - A bare command name (e.g. uchardet), in which case it resolves it the same way PowerShell would when
-      launching a process (Get-Command + PATHEXT).
-  Returns $true if the executable can be found, otherwise $false.
+<# 
+Returns a .NET [Text.Encoding] from an "encoding description" string 
+(e.g. 'UTF-8 (with BOM)', 'UTF-8 (No BOM)', 'CP1252').
+Returns $null if description is unknown. 
+NOTE: EncodingDescription strings may contain "(With BOM)" / "(No BOM)" for reporting,
+but the returned .NET Encoding object does not include the BOM policy.
+BOM handling is implemented explicitly by preserving/prepending BOMBytes when writing.
 #>
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory,Position=0)][string]$Exe
+function _Resolve-TextEncodingString {
+  [CmdletBinding()] param(
+      [AllowNull()][string]$Description
   )
 
-  if([string]::IsNullOrWhiteSpace($Exe)){ return $false }
-  $x = $Exe.Trim()
-
-  if([IO.Path]::IsPathRooted($x)){
-    if(Test-Path -LiteralPath $x){ return $true }
-    $ext = [IO.Path]::GetExtension($x)
-    if([string]::IsNullOrWhiteSpace($ext)){
-      foreach($e in @('.exe','.cmd','.bat','.com')){
-        if(Test-Path -LiteralPath ($x + $e)){ return $true }
-      }
+  <# Normalizes uchardet-style encoding names to .NET GetEncoding()-friendly names
+  Returns $null for empty input. #>
+  function _Gte_MapUchardetToDotNetName {
+    [CmdletBinding()] param([AllowNull()][string]$UchardetName)
+    if(-not $UchardetName){return $null}
+    $n=$UchardetName.Trim().ToUpperInvariant() -replace '_','-'
+    switch -Regex ($n) {
+      '^ASCII$' { 'us-ascii'; break }
+      '^MAC-CENTRALEUROPE$' { 'x-mac-ce'; break }
+      '^MAC-CYRILLIC$' { 'x-mac-cyrillic'; break }
+      '^ISO-2022-CN$' { 'x-cp50227'; break }
+      '^TIS-620$' { 'windows-874'; break }
+      '^ISO-8859-11$' { 'windows-874'; break }
+      '^CP(\d{3,5})$' { "windows-$($Matches[1])"; break }
+      '^WINDOWS-(\d{3,5})$' { "windows-$($Matches[1])"; break }
+      '^ISO-8859-(\d{1,2})$' { "iso-8859-$($Matches[1])"; break }
+      default { $UchardetName }
     }
-    return $false
   }
 
-  $c = Get-Command -Name $x -CommandType 'Application' -ErrorAction SilentlyContinue
-  if($c){ return $true }
 
-  $pathext = ($env:PATHEXT -split ';' | Where-Object { $_ } | ForEach-Object { $_.Trim() })
-  if($x -match '\.'){ return $false }
-  foreach($e in $pathext){
-    if(Get-Command -Name ($x + $e) -ErrorAction SilentlyContinue){ return $true }
+  if (-not $Description) { return $null }
+  $base = ($Description -replace '\s+\(With BOM\)\s*$','' -replace '\s+\(No BOM\)\s*$','')
+  $name = switch -Regex ($base.ToUpperInvariant()) {
+    '^UTF-16LE$' { 'utf-16' }
+    '^UTF-16BE$' { 'unicodeFFFE' }
+    '^UTF-32LE$' { 'utf-32' }
+    '^UTF-32BE$' { 'utf-32BE' }
+    '^UTF-8$'    { 'utf-8' }
+    '^ASCII$'    { 'us-ascii' }
+    '^CP1253$'   { 'windows-1253' }
+    default      { _Gte_MapUchardetToDotNetName $base }
   }
-  return $false
+  try { [Text.Encoding]::GetEncoding($name) } catch { $null }
 }
 
 
-function Invoke-Uchardet {
+function Get-NewlineStyle {
+<#
+.SYNOPSIS
+Detect newline style in a decoded string. Returns 'CRLF','LF','CR','Mixed','None','NotChecked'.
+#>
+  [CmdletBinding()] param(
+    [Parameter(Mandatory)][string]$Text
+  )
+  $hasCRLF = $Text -match "`r`n"
+  $hasLF   = $Text -match "(?<!`r)`n"
+  $hasCR   = $Text -match "`r(?!`n)"
+  if (-not $hasCRLF -and -not $hasLF -and -not $hasCR) { return 'None' }
+  $k = @($hasCRLF,$hasLF,$hasCR) | Where-Object {$_} | Measure-Object | Select-Object -ExpandProperty Count
+  if ($k -gt 1) { return 'Mixed' }
+  if ($hasCRLF) { return 'CRLF' }
+  if ($hasLF)   { return 'LF' }
+  if ($hasCR)   { return 'CR' }
+  return 'Mixed'
+}
+
+function _Invoke-Uchardet {
 <#
 .SYNOPSIS
 Runs uchardet with safe quoting and a hard timeout.
@@ -857,190 +762,8 @@ Runs uchardet with safe quoting and a hard timeout.
   }
 }
 
-# ================================
-# Internal helpers for Get-TextFileEncoding
-# ================================
 
-<# 
-Returns a .NET [Text.Encoding] from an "encoding description" string 
-(e.g. 'UTF-8 (with BOM)', 'UTF-8 (No BOM)', 'CP1252').
-Returns $null if description is unknown. 
-NOTE: EncodingDescription strings may contain "(With BOM)" / "(No BOM)" for reporting,
-but the returned .NET Encoding object does not include the BOM policy.
-BOM handling is implemented explicitly by preserving/prepending BOMBytes when writing.
-#>
-function _Resolve-TextEncodingString {
-  [CmdletBinding()] param(
-      [AllowNull()][string]$Description
-  )
-
-  <# Normalizes uchardet-style encoding names to .NET GetEncoding()-friendly names
-  Returns $null for empty input. #>
-  function _Gte_MapUchardetToDotNetName {
-    [CmdletBinding()] param([AllowNull()][string]$UchardetName)
-    if(-not $UchardetName){return $null}
-    $n=$UchardetName.Trim().ToUpperInvariant() -replace '_','-'
-    switch -Regex ($n) {
-      '^ASCII$' { 'us-ascii'; break }
-      '^MAC-CENTRALEUROPE$' { 'x-mac-ce'; break }
-      '^MAC-CYRILLIC$' { 'x-mac-cyrillic'; break }
-      '^ISO-2022-CN$' { 'x-cp50227'; break }
-      '^TIS-620$' { 'windows-874'; break }
-      '^ISO-8859-11$' { 'windows-874'; break }
-      '^CP(\d{3,5})$' { "windows-$($Matches[1])"; break }
-      '^WINDOWS-(\d{3,5})$' { "windows-$($Matches[1])"; break }
-      '^ISO-8859-(\d{1,2})$' { "iso-8859-$($Matches[1])"; break }
-      default { $UchardetName }
-    }
-  }
-
-
-  if (-not $Description) { return $null }
-  $base = ($Description -replace '\s+\(With BOM\)\s*$','' -replace '\s+\(No BOM\)\s*$','')
-  $name = switch -Regex ($base.ToUpperInvariant()) {
-    '^UTF-16LE$' { 'utf-16' }
-    '^UTF-16BE$' { 'unicodeFFFE' }
-    '^UTF-32LE$' { 'utf-32' }
-    '^UTF-32BE$' { 'utf-32BE' }
-    '^UTF-8$'    { 'utf-8' }
-    '^ASCII$'    { 'us-ascii' }
-    '^CP1253$'   { 'windows-1253' }
-    default      { _Gte_MapUchardetToDotNetName $base }
-  }
-  try { [Text.Encoding]::GetEncoding($name) } catch { $null }
-}
-
-function Resolve-FileFromPath {
-<#
-.SYNOPSIS
-Resolve a path to exactly one existing FileSystem file ([IO.FileInfo]) or return $null.
-
-.DESCRIPTION
-  Accepts a path (or FileInfo/DirectoryInfo) and enforces strict "one real file" semantics:
-    - Must exist
-    - Must be FileSystem provider
-    - Must not be a directory
-    - If wildcards are used, they must match exactly one item
-
-  On failure, emits a tagged _Write-FunctionError ([RFFP-*]) including both the original input and (when available)
-  the resolved full path, then returns $null (caller decides whether to stop via -ErrorAction).
-
-.OUTPUTS
-  System.IO.FileInfo or $null.
-#>
-  [CmdletBinding()] param([Parameter(Mandatory)][object]$Path)
-
-  $orig=$Path
-  $s=$null
-
-  if($Path -is [IO.FileInfo]){
-    $fi=$Path
-    if(-not $fi.Exists){ _Write-FunctionError -Message ("File not found [RFFP-NOTFOUND]: input='{0}' resolved='{1}'" -f $orig,$fi.FullName) -Category ObjectNotFound -TargetObject $orig; return $null }
-    if($fi.Attributes -band [IO.FileAttributes]::Directory){ _Write-FunctionError -Message ("Path is a directory [RFFP-DIR]: input='{0}' resolved='{1}'" -f $orig,$fi.FullName) -Category InvalidArgument -TargetObject $orig; return $null }
-    return [IO.FileInfo]$fi
-  }
-
-  if($Path -is [IO.DirectoryInfo]){
-    _Write-FunctionError -Message ("Path is a directory [RFFP-DIR]: input='{0}' resolved='{1}'" -f $orig,$Path.FullName) -Category InvalidArgument -TargetObject $orig
-    return $null
-  }
-
-  $s=("$Path").Trim()
-  if([string]::IsNullOrWhiteSpace($s)){
-    _Write-FunctionError -Message ("Empty path [RFFP-EMPTY]: input='{0}'" -f $orig) -Category InvalidArgument -TargetObject $orig
-    return $null
-  }
-
-  $useWildcard=[System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($s)
-
-  try {
-    $items = if($useWildcard){
-      Get-Item -Path $s -Force -ErrorAction Stop
-    } else {
-      Get-Item -LiteralPath $s -Force -ErrorAction Stop
-    }
-  } catch {
-    _Write-FunctionError -Message ("File not found [RFFP-NOTFOUND]: input='{0}'" -f $orig) -Category ObjectNotFound -TargetObject $orig
-    return $null
-  }
-
-  $items=@($items)
-  if($items.Count -ne 1){
-    $sample=@($items | Select-Object -First 3 | ForEach-Object { $_.FullName }) -join '; '
-    _Write-FunctionError -Message ("Ambiguous path [RFFP-MULTI]: input='{0}' matches={1} sample='{2}'" -f $orig,$items.Count,$sample) -Category InvalidArgument -TargetObject $orig
-    return $null
-  }
-
-  $item=$items[0]
-  $resolved=$item.FullName
-
-  if($item.PSProvider.Name -ne 'FileSystem'){
-    _Write-FunctionError -Message ("Non-FileSystem path [RFFP-NONFS]: input='{0}' provider='{1}' resolved='{2}'" -f $orig,$item.PSProvider.Name,$resolved) -Category InvalidArgument -TargetObject $orig
-    return $null
-  }
-  if($item.PSIsContainer){
-    _Write-FunctionError -Message ("Path is a directory [RFFP-DIR]: input='{0}' resolved='{1}'" -f $orig,$resolved) -Category InvalidArgument -TargetObject $orig
-    return $null
-  }
-  if(-not ($item -is [IO.FileInfo])){
-    _Write-FunctionError -Message ("Not a file [RFFP-NOTFILE]: input='{0}' resolved='{1}' type='{2}'" -f $orig,$resolved,$item.GetType().FullName) -Category InvalidArgument -TargetObject $orig
-    return $null
-  }
-
-  [IO.FileInfo]$item
-}
-
-function Get-NewlineStyle {
-<#
-.SYNOPSIS
-Detect newline style in a decoded string. Returns 'CRLF','LF','CR','Mixed','None','NotChecked'.
-#>
-  [CmdletBinding()] param(
-    [Parameter(Mandatory)][string]$Text
-  )
-  $hasCRLF = $Text -match "`r`n"
-  $hasLF   = $Text -match "(?<!`r)`n"
-  $hasCR   = $Text -match "`r(?!`n)"
-  if (-not $hasCRLF -and -not $hasLF -and -not $hasCR) { return 'None' }
-  $k = @($hasCRLF,$hasLF,$hasCR) | Where-Object {$_} | Measure-Object | Select-Object -ExpandProperty Count
-  if ($k -gt 1) { return 'Mixed' }
-  if ($hasCRLF) { return 'CRLF' }
-  if ($hasLF)   { return 'LF' }
-  if ($hasCR)   { return 'CR' }
-  return 'Mixed'
-}
-
-<#
-Validates that a byte[] buffer is UTF-8, while intentionally tolerating an incomplete final UTF-8 sequence.
-Returns $true if the buffer contains no invalid UTF-8 sequences in its body.
-#>
-function Test-BufferIsValidUtf8 {
-  [CmdletBinding()] param(
-    [Parameter(Mandatory)][byte[]]$Bytes
-  )
-
-  $n = if($Bytes){ [int]$Bytes.Length } else { 0 }
-  if($n -eq 0){ return $true }
-
-  $utf8Strict = New-Object System.Text.UTF8Encoding($false,$true)
-
-  $maxTrim = if($n -gt 3){ 3 } else { $n }
-  for($trim=0; $trim -le $maxTrim; $trim++){
-    $len = $n - $trim
-    try {
-      $dec = $utf8Strict.GetDecoder()
-      if($len -gt 0){ $null = $dec.GetCharCount($Bytes,0,$len,$true) } else { $null = $dec.GetCharCount($Bytes,0,0,$true) }
-      return $true
-    } catch [System.Text.DecoderFallbackException] {
-    } catch {
-    }
-  }
-
-  return $false
-}
-
-
-<# Runs uchardet on the file; Returns Invoke-Uchardet's result object. Note: if file > -MaxBytes it writes SampleBytes to a temp file and runs on that; always cleans temp #>
+<# Runs uchardet on the file; Returns _Invoke-Uchardet's result object. Note: if file > -MaxBytes it writes SampleBytes to a temp file and runs on that; always cleans temp #>
 function _Gte_InvokeUchardetOnFileOrSample {
   [CmdletBinding()] param(
     [Parameter(Mandatory)][IO.FileInfo]$File,
@@ -1065,7 +788,7 @@ function _Gte_InvokeUchardetOnFileOrSample {
     }
   }
 
-  $uRes = Invoke-Uchardet -FilePath $targetPath -TimeoutMs $TimeoutMs -ExePath $ExePath
+  $uRes = _Invoke-Uchardet -FilePath $targetPath -TimeoutMs $TimeoutMs -ExePath $ExePath
 
   if ($tmp -and (Test-Path $tmp)) { Remove-Item -Force -ErrorAction SilentlyContinue $tmp }
 
@@ -1470,3 +1193,291 @@ error when building the hashtable.
         }
     }
 }
+
+function Replace-FileBytesSafely {
+<#
+.SYNOPSIS
+Replaces a file's contents with specified bytes, optionally retaining a backup.
+
+.DESCRIPTION
+  Behavior and guarantees:
+    - Writes the new content to -TmpPath first, then attempts to replace -ResolvedPath with it.
+    - Primary path uses [IO.File]::Replace(), which is the best option on local NTFS:
+        * Readers see either the old or the new file, not a partially-written file.
+        * A backup at -BakPath is created/overwritten as part of the replace.
+    - If Replace() fails (common on non-NTFS volumes, SMB shares with varying semantics, or transient locks
+      e.g. AV/OneDrive/indexing), it falls back to Copy-Item + Move-Item with best-effort rollback:
+        * This fallback is NOT atomic. It is provided for compatibility and "works in more places".
+        * If the move fails after the backup copy, the function attempts to restore from -BakPath.
+
+  Backup semantics:
+    - -BakPath is always used as the safety copy when swapping.
+    - If -UserBackup is $true, -BakPath is considered caller-visible and is preserved.
+    - If -UserBackup is $false, -BakPath is a transient safety backup and may be deleted on success.
+
+  Cleanup:
+    - Always attempts to delete -TmpPath in a finally block.
+    - Does not promise preservation of metadata/streams in the fallback path (ACLs, ADS, timestamps, etc.)
+      beyond what the underlying filesystem/provider naturally keeps.
+
+.PARAMETER ResolvedPath
+  The existing target file to be replaced (must be on the same volume as -TmpPath for best behavior).
+
+.PARAMETER TmpPath
+  A temp file path in the same directory as the target (recommended) containing the new bytes to commit.
+
+.PARAMETER BakPath
+  Path for the backup copy used during the swap. May be a user-requested backup (kept) or a transient one.
+
+.PARAMETER UserBackup
+  Indicates whether -BakPath is user-requested (keep it) or internal/transient (delete on success).
+
+.PARAMETER Bytes
+  The final bytes to be written/committed to the target file.
+
+.NOTES
+  - Intended for "in-place update" workflows: generate full new content, then commit in one swap.
+  - For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy
+    around the Replace() stage (if not implemented inside this function).
+#>
+  [CmdletBinding()] param(
+    [Parameter(Mandatory)][string]$ResolvedPath,
+    [Parameter(Mandatory)][string]$TmpPath,
+    [Parameter(Mandatory)][string]$BakPath,
+    [Parameter(Mandatory)][bool]$UserBackup,
+    [Parameter(Mandatory)][byte[]]$Bytes,
+    [int]$Retries=2,
+    [int]$RetryDelayMs=120,
+    [switch]$StrictAtomic
+  )
+
+  try {
+    [IO.File]::WriteAllBytes($TmpPath,$Bytes)
+
+    $replaced=$false
+    for($i=0;$i -le $Retries;$i++){
+      try{
+        if(Test-Path -LiteralPath $BakPath){ Remove-Item -LiteralPath $BakPath -Force -ErrorAction SilentlyContinue }
+        [IO.File]::Replace($TmpPath,$ResolvedPath,$BakPath,$true)
+        $replaced=$true
+        break
+      } catch [System.IO.IOException] {
+        if($i -lt $Retries){ Start-Sleep -Milliseconds $RetryDelayMs; continue }
+        break
+      } catch [System.UnauthorizedAccessException] {
+        if($i -lt $Retries){ Start-Sleep -Milliseconds $RetryDelayMs; continue }
+        break
+      }
+    }
+
+    if($replaced){
+      if(-not $UserBackup -and (Test-Path -LiteralPath $BakPath)){ Remove-Item -LiteralPath $BakPath -Force -ErrorAction SilentlyContinue }
+      return
+    }
+
+    if($StrictAtomic){ throw "Atomic replace failed (File.Replace) and StrictAtomic is set." }
+
+    Copy-Item -LiteralPath $ResolvedPath -Destination $BakPath -Force -ErrorAction Stop
+    try {
+      Move-Item -LiteralPath $TmpPath -Destination $ResolvedPath -Force -ErrorAction Stop
+      if(-not $UserBackup -and (Test-Path -LiteralPath $BakPath)){ Remove-Item -LiteralPath $BakPath -Force -ErrorAction SilentlyContinue }
+    } catch {
+      if(Test-Path -LiteralPath $BakPath){
+        Move-Item -LiteralPath $BakPath -Destination $ResolvedPath -Force -ErrorAction SilentlyContinue
+      }
+      throw
+    }
+
+  } finally {
+    if(Test-Path -LiteralPath $TmpPath){ Remove-Item -LiteralPath $TmpPath -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+
+function Read-FirstBytes {
+<#
+.SYNOPSIS
+Safe(shared) read of up to Count bytes from the start of a file.
+#>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][IO.FileInfo]$File,
+    [Parameter(Mandatory)][int]$Count
+  )
+  $toRead = [math]::Min([int64]$Count, [int64]$File.Length)
+  $buf = New-Object byte[] $toRead
+  $fs  = [IO.File]::Open($File.FullName,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+  try {
+    $offset = 0
+    while ($offset -lt $toRead) {
+      $n = $fs.Read($buf, $offset, $toRead - $offset)
+      if ($n -le 0) { break }
+      $offset += $n
+    }
+    if ($offset -lt $toRead) {
+      # shrink to actual bytes read
+      $shrink = New-Object byte[] $offset
+      [Array]::Copy($buf, 0, $shrink, 0, $offset)
+      $buf = $shrink
+    }
+  } finally { $fs.Dispose() }
+  [pscustomobject]@{ Buffer = $buf; BytesRead = [int]$buf.Length }
+}
+
+
+function Test-ExeFound {
+<#
+.SYNOPSIS
+Tests whether an executable can be resolved either as a full path or via PATH/PATHEXT.
+
+.DESCRIPTION
+  Accepts either:
+    - A rooted path (e.g. C:\Tools\uchardet or C:\Tools\uchardet.exe), in which case it checks existence and,
+      if no extension was given, also tries common executable extensions (.exe/.cmd/.bat/.com).
+    - A bare command name (e.g. uchardet), in which case it resolves it the same way PowerShell would when
+      launching a process (Get-Command + PATHEXT).
+  Returns $true if the executable can be found, otherwise $false.
+#>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory,Position=0)][string]$Exe
+  )
+
+  if([string]::IsNullOrWhiteSpace($Exe)){ return $false }
+  $x = $Exe.Trim()
+
+  if([IO.Path]::IsPathRooted($x)){
+    if(Test-Path -LiteralPath $x){ return $true }
+    $ext = [IO.Path]::GetExtension($x)
+    if([string]::IsNullOrWhiteSpace($ext)){
+      foreach($e in @('.exe','.cmd','.bat','.com')){
+        if(Test-Path -LiteralPath ($x + $e)){ return $true }
+      }
+    }
+    return $false
+  }
+
+  $c = Get-Command -Name $x -CommandType 'Application' -ErrorAction SilentlyContinue
+  if($c){ return $true }
+
+  $pathext = ($env:PATHEXT -split ';' | Where-Object { $_ } | ForEach-Object { $_.Trim() })
+  if($x -match '\.'){ return $false }
+  foreach($e in $pathext){
+    if(Get-Command -Name ($x + $e) -ErrorAction SilentlyContinue){ return $true }
+  }
+  return $false
+}
+
+
+function Resolve-FileFromPath {
+<#
+.SYNOPSIS
+Resolve a path to exactly one existing FileSystem file ([IO.FileInfo]) or return $null.
+
+.DESCRIPTION
+  Accepts a path (or FileInfo/DirectoryInfo) and enforces strict "one real file" semantics:
+    - Must exist
+    - Must be FileSystem provider
+    - Must not be a directory
+    - If wildcards are used, they must match exactly one item
+
+  On failure, emits a tagged _Write-FunctionError ([RFFP-*]) including both the original input and (when available)
+  the resolved full path, then returns $null (caller decides whether to stop via -ErrorAction).
+
+.OUTPUTS
+  System.IO.FileInfo or $null.
+#>
+  [CmdletBinding()] param([Parameter(Mandatory)][object]$Path)
+
+  $orig=$Path
+  $s=$null
+
+  if($Path -is [IO.FileInfo]){
+    $fi=$Path
+    if(-not $fi.Exists){ _Write-FunctionError -Message ("File not found [RFFP-NOTFOUND]: input='{0}' resolved='{1}'" -f $orig,$fi.FullName) -Category ObjectNotFound -TargetObject $orig; return $null }
+    if($fi.Attributes -band [IO.FileAttributes]::Directory){ _Write-FunctionError -Message ("Path is a directory [RFFP-DIR]: input='{0}' resolved='{1}'" -f $orig,$fi.FullName) -Category InvalidArgument -TargetObject $orig; return $null }
+    return [IO.FileInfo]$fi
+  }
+
+  if($Path -is [IO.DirectoryInfo]){
+    _Write-FunctionError -Message ("Path is a directory [RFFP-DIR]: input='{0}' resolved='{1}'" -f $orig,$Path.FullName) -Category InvalidArgument -TargetObject $orig
+    return $null
+  }
+
+  $s=("$Path").Trim()
+  if([string]::IsNullOrWhiteSpace($s)){
+    _Write-FunctionError -Message ("Empty path [RFFP-EMPTY]: input='{0}'" -f $orig) -Category InvalidArgument -TargetObject $orig
+    return $null
+  }
+
+  $useWildcard=[System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($s)
+
+  try {
+    $items = if($useWildcard){
+      Get-Item -Path $s -Force -ErrorAction Stop
+    } else {
+      Get-Item -LiteralPath $s -Force -ErrorAction Stop
+    }
+  } catch {
+    _Write-FunctionError -Message ("File not found [RFFP-NOTFOUND]: input='{0}'" -f $orig) -Category ObjectNotFound -TargetObject $orig
+    return $null
+  }
+
+  $items=@($items)
+  if($items.Count -ne 1){
+    $sample=@($items | Select-Object -First 3 | ForEach-Object { $_.FullName }) -join '; '
+    _Write-FunctionError -Message ("Ambiguous path [RFFP-MULTI]: input='{0}' matches={1} sample='{2}'" -f $orig,$items.Count,$sample) -Category InvalidArgument -TargetObject $orig
+    return $null
+  }
+
+  $item=$items[0]
+  $resolved=$item.FullName
+
+  if($item.PSProvider.Name -ne 'FileSystem'){
+    _Write-FunctionError -Message ("Non-FileSystem path [RFFP-NONFS]: input='{0}' provider='{1}' resolved='{2}'" -f $orig,$item.PSProvider.Name,$resolved) -Category InvalidArgument -TargetObject $orig
+    return $null
+  }
+  if($item.PSIsContainer){
+    _Write-FunctionError -Message ("Path is a directory [RFFP-DIR]: input='{0}' resolved='{1}'" -f $orig,$resolved) -Category InvalidArgument -TargetObject $orig
+    return $null
+  }
+  if(-not ($item -is [IO.FileInfo])){
+    _Write-FunctionError -Message ("Not a file [RFFP-NOTFILE]: input='{0}' resolved='{1}' type='{2}'" -f $orig,$resolved,$item.GetType().FullName) -Category InvalidArgument -TargetObject $orig
+    return $null
+  }
+
+  [IO.FileInfo]$item
+}
+
+
+function Test-BufferIsValidUtf8 {
+<#
+.SYNOPSIS
+Validates that a byte[] buffer is UTF-8, while intentionally tolerating an incomplete final UTF-8 sequence.
+.DESCRIPTION
+Returns $true if the buffer contains no invalid UTF-8 sequences in its body.
+#>  [CmdletBinding()] param(
+    [Parameter(Mandatory)][byte[]]$Bytes
+  )
+
+  $n = if($Bytes){ [int]$Bytes.Length } else { 0 }
+  if($n -eq 0){ return $true }
+
+  $utf8Strict = New-Object System.Text.UTF8Encoding($false,$true)
+
+  $maxTrim = if($n -gt 3){ 3 } else { $n }
+  for($trim=0; $trim -le $maxTrim; $trim++){
+    $len = $n - $trim
+    try {
+      $dec = $utf8Strict.GetDecoder()
+      if($len -gt 0){ $null = $dec.GetCharCount($Bytes,0,$len,$true) } else { $null = $dec.GetCharCount($Bytes,0,0,$true) }
+      return $true
+    } catch [System.Text.DecoderFallbackException] {
+    } catch {
+    }
+  }
+
+  return $false
+}
+
+

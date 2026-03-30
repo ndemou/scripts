@@ -64,6 +64,17 @@
         </details>
       </li>
       <li class="script-item">
+        <a class="script-link" href="helpers-files.ps1">helpers-files.ps1</a>
+          <p class="script-synopsis">A collection of helper functions for handling files</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <div class="script-details-text">Functions:</div>
+          <ul class="function-list">
+            <li><strong>Get-HardLinks</strong>: Lists files in the current directory that have &gt;1 hardlink, and shows all link paths</li>
+          </ul>
+        </details>
+      </li>
+      <li class="script-item">
         <a class="script-link" href="helpers-networking.ps1">helpers-networking.ps1</a>
           <p class="script-synopsis">A collection of helper functions for Networking</p>
         <details class="script-details">
@@ -102,22 +113,21 @@
           <summary>Read more</summary>
           <div class="script-details-text">Functions:</div>
           <ul class="function-list">
-            <li><strong>Replace-FileBytesSafely</strong></li>
-            <li><strong>Edit-TextFile</strong></li>
-            <li><strong>Read-FirstBytes</strong></li>
-            <li><strong>Test-ExeFound</strong></li>
-            <li><strong>Invoke-Uchardet</strong></li>
-            <li><strong>Resolve-FileFromPath</strong></li>
-            <li><strong>Get-NewlineStyle</strong></li>
-            <li><strong>Test-BufferIsValidUtf8</strong></li>
-            <li><strong>Get-TextFileEncoding</strong></li>
+            <li><strong>Edit-TextFile</strong>: Searches and replaces text in files while maintaining the existing text encoding (but will switch ASCII to UTF8 if replacement is unicode).</li>
+            <li><strong>Get-NewlineStyle</strong>: Detect newline style in a decoded string. Returns &#x27;CRLF&#x27;,&#x27;LF&#x27;,&#x27;CR&#x27;,&#x27;Mixed&#x27;,&#x27;None&#x27;,&#x27;NotChecked&#x27;.</li>
+            <li><strong>Get-TextFileEncoding</strong>: Detect (if possible) or guess the encoding of Text Files.</li>
             <li><strong>Remove-TypographyUnicodeFromTextFile</strong>: Substitutes Unicode typography characters with ASCII characters in one or more target text files. Mimics the interface of Edit-TextFile.</li>
+            <li><strong>Replace-FileBytesSafely</strong>: Replaces a file&#x27;s contents with specified bytes, optionally retaining a backup.</li>
+            <li><strong>Read-FirstBytes</strong>: Safe(shared) read of up to Count bytes from the start of a file.</li>
+            <li><strong>Test-ExeFound</strong>: Tests whether an executable can be resolved either as a full path or via PATH/PATHEXT.</li>
+            <li><strong>Resolve-FileFromPath</strong>: Resolve a path to exactly one existing FileSystem file ([IO.FileInfo]) or return $null.</li>
+            <li><strong>Test-BufferIsValidUtf8</strong>: Validates that a byte[] buffer is UTF-8, while intentionally tolerating an incomplete final UTF-8 sequence.</li>
           </ul>
         </details>
       </li>
       <li class="script-item">
         <a class="script-link" href="Install-PrepLapCode.ps1">Install-PrepLapCode.ps1</a>
-          <p class="script-synopsis">Install/Update mazars-prepare-laptop-code</p>
+          <p class="script-synopsis">Only relevant to mazars (Install/Update mazars-prepare-laptop-code)</p>
       </li>
       <li class="script-item">
         <a class="script-link" href="Run-DismSfc.ps1">Run-DismSfc.ps1</a>
@@ -155,13 +165,16 @@
           <p class="script-synopsis">Prints a detailed warning every time it finds RAM, CPU or Disks are stressed</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>C:&gt; c:\it\bin\Test-ForCpuRamDiskStress.ps1 | Tee-Object &quot;C:\it\temp\CpuRamDiskStress.log&quot;</p>
-          <p class="script-details-text">20:12:47 HIGH &lt;HOSTNAME&gt; Reasons:<br>- Available memory minimum 0,5% is below the 5% threshold while average Page Reads/sec is  319, above the 150 threshold. Low headroom with active hard faults indicates real stress.<br>- High classification gate satisfied: Available memory(%) minimum 0,5 is below the 10% gate threshold.<br>Measurements:<br>- Time window: 18 secs (9 samples)<br>- Available memory: average 68,3%, minimum 0,5%<br>- Committed memory: average 31,9%, maximum 67,0%<br>- Paging file usage: maximum 73%<br>- Page Reads/sec (hard faults): average 319, maximum 1.789<br>- Page Writes/sec: average 23, maximum 203<br>- Transition Faults/sec: average 1.281, maximum 6.797<br>- Disk read latency: average 0,0 ms<br>- Disk write latency: average 0,0 ms<br>- Disk queue length: average 7,3<br>- Standby cache memory: Normal 58 MB, Reserve 222 MB, Core 0 MB<br>- File cache memory: 4 MB<br>- Modified page list: 134 MB<br>- Compressed memory: 0 MB</p>
-          <p class="script-details-text"><span class="detail-directive">.DESCRIPTION</span><br>There are two modes of operation: monitoring and log file analysis.</p>
+          <p class="script-details-text">There are two modes of operation: monitoring and log file analysis.</p>
           <p class="script-details-text">In monitor mode (the default) it prints a detailed warning every<br>time it finds RAM, CPU or Disks are stressed.</p>
           <p class="script-details-text">In monitor mode these switches may be used.<br>-MonitorVolumes:   Will also monitor IO stress of Volumes<br>-DontMonitorDisks: Will NOT monitor  IO stress of disks</p>
           <p class="script-details-text">In log analysis (invoked if you supply a -LogFile) it creates a<br>summary report based on the contents of the log file.</p>
           <p class="script-details-text">In log analysis mode these arguments may be used.<br>-Granularity<br>-LogsToIgnoreRegex</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Download &amp; Setup to always run on startup<br>$bin=&quot;C:\IT\bin&quot;;$log=&quot;C:\it\log&quot;<br>$f=&quot;Test-ForCpuRamDiskStress.ps1&quot;;mkdir $bin -force &gt;$null;mkdir $log -force &gt; $null<br>iwr -useb https://ndemou.github.io/scripts/$f -OutFile $bin\$f</p>
+          <p class="script-details-text">$f=&quot;helpers-processes.ps1&quot;; iwr -useb https://ndemou.github.io/scripts/$f -OutFile $bin\$f; . $bin\$f<br>New-ScheduledTaskForPSScript -ScriptPath &quot;$bin\Test-ForCpuRamDiskStress.ps1&quot; -ScheduleType Startup -ScriptArguments &quot;-LogDir&quot;,$log<br>Start-ScheduledTask -TaskPath &#x27;\enLogic\&#x27; -TaskName &#x27;Execute Test-ForCpuRamDiskStress.ps1&#x27;<br><span class="detail-directive">.EXAMPLE</span><br>Get statistics for a particular date<br>&amp; $bin\Test-ForCpuRamDiskStress.ps1 -Granularity 10m -LogFile C:\it\log\CpuRamDiskStress.2026-01-14.log</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>If you want to run only once:<br>&amp; C:\IT\bin\Test-ForCpuRamDiskStress.ps1 -LogDir c:\it\log -LogBaseName &#x27;CpuRamDiskStress&#x27;</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>What you see if memory is under pressure.<br>C:\IT\bin\Test-ForCpuRamDiskStress.ps1 | Tee-Object &quot;C:\it\temp\CpuRamDiskStress.log&quot;</p>
+          <p class="script-details-text">20:12:47 HIGH &lt;HOSTNAME&gt; Reasons:<br>- Available memory minimum 0,5% is below the 5% threshold while average Page Reads/sec is  319, above the 150 threshold. Low headroom with active hard faults indicates real stress.<br>- High classification gate satisfied: Available memory(%) minimum 0,5 is below the 10% gate threshold.<br>Measurements:<br>- Time window: 18 secs (9 samples)<br>- Available memory: average 68,3%, minimum 0,5%<br>- Committed memory: average 31,9%, maximum 67,0%<br>- Paging file usage: maximum 73%<br>- Page Reads/sec (hard faults): average 319, maximum 1.789<br>- Page Writes/sec: average 23, maximum 203<br>- Transition Faults/sec: average 1.281, maximum 6.797<br>- Disk read latency: average 0,0 ms<br>- Disk write latency: average 0,0 ms<br>- Disk queue length: average 7,3<br>- Standby cache memory: Normal 58 MB, Reserve 222 MB, Core 0 MB<br>- File cache memory: 4 MB<br>- Modified page list: 134 MB<br>- Compressed memory: 0 MB</p>
         </details>
       </li>
       <li class="script-item">
@@ -169,16 +182,17 @@
           <p class="script-synopsis">Installs Windows Updates using the supported WUA COM API, with optional download, controlled reboot (now or scheduled), and detailed logging.</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">SPECIAL SHOW UPDATE HISTORY MODE<br>If -ShowHistory is used, the script does NOT install/download/reboot.<br>Instead it queries Windows Update history (same source as the GUI &quot;View update history&quot;),<br>optionally filtered, and then exits.</p>
-          <p class="script-details-text">NORMAL INSTALL UPDATES MODE<br>By default(without -ShowHistory) it installs Windows updates like this:<br>- Installs already downloaded updates if any.<br>- With -Download, will also download all required updates.<br>- With -Reboot, will reboot after installation if needed (or regardless with -RebootAnyway).</p>
+          <p class="script-details-text">SPECIAL SHOW UPDATE HISTORY MODE</p>
+          <p class="script-details-text">If -ShowHistory is used, the script does NOT install/download/reboot.<br>Instead it queries Windows Update history (same source as the GUI &quot;View update history&quot;),<br>optionally filtered, and then exits.</p>
+          <p class="script-details-text">NORMAL INSTALL UPDATES MODE</p>
+          <p class="script-details-text">By default(without -ShowHistory) it installs Windows updates like this:<br>- Installs already downloaded updates if any.<br>- With -Download, will also download all required updates.<br>- With -Reboot, will reboot after installation if needed (or regardless with -RebootAnyway).</p>
           <p class="script-details-text">Batches &quot;normal&quot; updates together; installs &quot;exclusive&quot; updates one-by-one; accepts EULAs.</p>
-          <p class="script-details-text">Robustness:<br>Service start is retried up to 3x with exponential delays (5s, 10s, 20s) before failing.</p>
-          <p class="script-details-text">Pending reboot detection uses WU `RebootRequired` and CBS `RebootPending`.</p>
-          <p class="script-details-text">Post-download refresh search has a catch/fallback: if the refresh search throws, proceeds using the initial search results (with a warning).</p>
-          <p class="script-details-text">Uses only supported, inbox components (no extra modules, no `UsoClient`, PS 5.1-safe syntax).</p>
-          <p class="script-details-text">Reboot is first tried without /f and after a few minutes with /f.</p>
-          <p class="script-details-text">If an update (e.g. Servicing Stack) installs and immediately requires a reboot; subsequent updates will fail with 0x80240030 until reboot. If such failures are detected and the script was run with -Reboot or -RebootAnyway,<br>the script will ensure continuation of installations after the reboot like this:<br>- Create a temporary scheduled task that runs this script again<br>at startup with -XXX_ResumeAfterReboot.<br>- On that second automated run with -XXX_ResumeAfterReboot:<br>- The startup task is removed and the script continues as normal (install + maybe reboot).</p>
-          <p class="script-details-text">Logging:<br>- Logs everything to WindowsUpdateHelper-YYYY-MM-DD.log<br>1. If C:\IT\LOG exists, log is created there.<br>2. Else if C:\IT\LOGS exists, there.<br>3. Else in the system temp folder.</p>
+          <p class="script-details-text"># Regarding Robustness<br>- Service start is retried up to 3x with exponential delays (5s, 10s, 20s) before failing.<br>- Pending reboot detection uses WU `RebootRequired` and CBS `RebootPending`.<br>- Post-download refresh search has a catch/fallback: if the refresh search throws, proceeds using the initial search results (with a warning).<br>- Uses only supported, inbox components (no extra modules, no `UsoClient`, PS 5.1-safe syntax).<br>- Reboot is first tried without /f and after a few minutes with /f.</p>
+          <p class="script-details-text">If an update (e.g. Servicing Stack) installs and immediately requires a reboot; subsequent updates will fail with 0x80240030 until reboot. If such failures are detected and the script was run with -Reboot or -RebootAnyway,<br>the script will ensure continuation of installations after the reboot like this:<br>- Create a temporary scheduled task that runs this script again<br>at startup with -XXX_ResumeAfterReboot.<br>- On that second automated run with -XXX_ResumeAfterReboot: The startup<br>task is removed and the script continues as normal (install + maybe reboot).</p>
+          <p class="script-details-text"># Logging<br>Logs everything to `WindowsUpdateHelper-YYYY-MM-DD.log`<br>1. If C:\IT\LOG exists, log is created there.<br>2. Else if C:\IT\LOGS exists, there.<br>3. Else in the system temp folder.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>The fastest way to bring a new installation up-to-date:<br>**CAUTION**: WILL REBOOT WITHOUT WAITING / WITHOUT ASKING<br>Download &amp; first run<br>Set-ExecutionPolicy -Scope Process -ExecutionPolicy Unrestricted -Force<br>$p=&quot;C:\it\bin&quot;;mkdir $p -force &gt;$null<br>$f=&quot;WindowsUpdatesHelper.ps1&quot;;iwr -useb https://wiki.enlogic.gr/pub/KnowledgeBase/PublicFiles/$f -OutFile $p\$f<br>&amp; C:\it\bin\WindowsUpdatesHelper.ps1 -Download -Reboot</p>
+          <p class="script-details-text">2nd Run (REPEAT UNTIL YOU GET 0 Updates Found)<br>&amp; c:\it\bin\WindowsUpdatesHelper.ps1 -Download -Reboot -Interactive<br>It will also install updates that MAY ask you to accept EULAs or make choices<br><span class="detail-directive">.EXAMPLE</span><br>Display the logs from the last 10 executions of this script<br>&amp; c:\it\bin\WindowsUpdatesHelper.ps1 -ListRecentLogs | %{cat $_.fullname|sls -NotMatch &#x27;^(Machine|Host Application|Process ID|Log file|Configuration Name|Username|End time|[A-Z][a-z]*(Versions?|Edition)): &#x27;}</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>**CAUTION**: An unfortunate side-effect of this script is that the updates<br>it installs are not visible in the GUI (Settings -&gt; Windows Updates).<br>The only way to view them:<br>&amp; c:\it\bin\WindowsUpdatesHelper.ps1 -ShowHistory | ft<br>You may add -IncludeAV if you want to also view (the very frequent) Antivirus udpates</p>
           <p class="script-details-text">.PARAMETER Download<br>Perform online scan and download applicable updates that are not yet downloaded, then proceed to install everything downloaded.</p>
           <p class="script-details-text">.PARAMETER Reboot<br>After installation, reboot only if updates require it (or regardless if -RebootAnyway is also used).</p>
           <p class="script-details-text">.PARAMETER Interactive<br>If specified, the script will include updates flagged as InstallationBehavior.CanRequestUserInput<br>(Like some drivers/firmware that show GUI prompts and wait for user actions -- e.g. clicking &quot;Accept&quot;).<br>Without this switch, such updates are skipped.<br>Alias: -CanRequestUserInput</p>
@@ -196,11 +210,11 @@
           <p class="script-details-text">.PARAMETER ListAll<br>Used only with -ListRecentLogs. If specified, returns all log files that can be found (instead of only the most recent 10).</p>
           <p class="script-details-text">.PARAMETER InstallOptional<br>Installs an optional update (needs the update ID)</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Install any already downloaded updates and reboot if needed:<br>.\WindowsUpdatesHelper.ps1 -Reboot</p>
-          <p class="script-details-text">Download, Install and if needed reboot:<br>.\WindowsUpdatesHelper.ps1 -Download -Reboot</p>
-          <p class="script-details-text">Download, Install and reboot regardless of whether updates require it:<br>.\WindowsUpdatesHelper.ps1 -Download -Reboot -RebootAnyway</p>
-          <p class="script-details-text">Show latest Windows Update history entries:<br>.\WindowsUpdatesHelper.ps1 -ShowHistory</p>
-          <p class="script-details-text">Show latest Windows Update history entries, include AV updates:<br>.\WindowsUpdatesHelper.ps1 -ShowHistory -LastDays 14 -IncludeAV</p>
-          <p class="script-details-text">List the most recent 10 log files created by this script (most recent last):<br>.\WindowsUpdatesHelper.ps1 -ListRecentLogs</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Download, Install and if needed reboot:<br>.\WindowsUpdatesHelper.ps1 -Download -Reboot</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Download, Install and reboot regardless of whether updates require it:<br>.\WindowsUpdatesHelper.ps1 -Download -Reboot -RebootAnyway</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Show latest Windows Update history entries:<br>.\WindowsUpdatesHelper.ps1 -ShowHistory</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Show latest Windows Update history entries, include AV updates:<br>.\WindowsUpdatesHelper.ps1 -ShowHistory -LastDays 14 -IncludeAV</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>List the most recent 10 log files created by this script (most recent last):<br>.\WindowsUpdatesHelper.ps1 -ListRecentLogs</p>
         </details>
       </li>
     </ul>
