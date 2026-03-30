@@ -120,10 +120,10 @@ function _Etf_GetSwapPaths {
   [pscustomobject]@{ Tmp=$tmp; Bak=$bak; UserBackup=$userBackup }
 }
 
+function Replace-FileBytesSafely {
 <#
 .SYNOPSIS
-  Replaces a file's contents with specified bytes, optionally retaining
-a backup.
+Replaces a file's contents with specified bytes, optionally retaining a backup.
 
 .DESCRIPTION
   Behavior and guarantees:
@@ -166,7 +166,6 @@ a backup.
   - For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy
     around the Replace() stage (if not implemented inside this function).
 #>
-function Replace-FileBytesSafely {
   [CmdletBinding()] param(
     [Parameter(Mandatory)][string]$ResolvedPath,
     [Parameter(Mandatory)][string]$TmpPath,
@@ -220,10 +219,10 @@ function Replace-FileBytesSafely {
   }
 }
 
+function Edit-TextFile {
 <#
 .SYNOPSIS
-Searches and replaces text in files while maintaining the existing
-text encoding (but will switch ASCII to UTF8 if replacement is unicode).
+Searches and replaces text in files while maintaining the existing text encoding (but will switch ASCII to UTF8 if replacement is unicode).
 
 .DESCRIPTION
 Performs an in-place regex (or literal) search/replace on a text file, 
@@ -286,7 +285,6 @@ files might remain on the storage volume.
 Files exceeding the configured maximum size limit or containing no
 data are skipped. Substitutions are evaluated sequentially.
 #>
-function Edit-TextFile {
   [CmdletBinding(DefaultParameterSetName='SingleReplace')]
   param(
     [Parameter(Mandatory=$true, Position=0)]
@@ -420,6 +418,7 @@ function Edit-TextFile {
   return $results | Select-Object -First 1
 }
 
+function _Get-GreekLetterStats {
 <# 
 .SYNOPSIS
 Try decoding Bytes as ANSI/8-bit Greek text and return success statistics.
@@ -432,7 +431,6 @@ Returns:
     SurelyISO88597     : If text is Greek, and this is $true, the encoding is definetely ISO-8859-7
     SurelyCP1253       : If text is Greek, and this is $true, the encoding is definetely CP1253
 #>
-function _Get-GreekLetterStats {
   [CmdletBinding()] param(
     [Parameter(Mandatory)][byte[]]$Bytes
   )
@@ -498,10 +496,10 @@ function _Detect-GreekAnsiEncoding {
 }
 
 
+function _Get-WinEncodingIfSuitable {
 <#
 .SYNOPSIS
-Returns the Windows encoding if it produces the same
-text as the ISO one, otherwise returns the ISO one.
+Returns the Windows encoding if it produces the same text as the ISO one, otherwise returns the ISO one.
 
 .DESCRIPTION
 It reads the first MaxBytes of the file, decodes them 
@@ -509,7 +507,6 @@ using the ISO encoding and then decodes them again with the
 coresponding Windows encoding. If the two texts Match
 it returns the Windows encoding, otherwise returns the ISO one.
 #>
-function _Get-WinEncodingIfSuitable {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][IO.FileInfo]$File,
@@ -527,6 +524,7 @@ function _Get-WinEncodingIfSuitable {
   if ($match) {return $WinEncoding} else {return $ISOEncoding}
 }
 
+function _Write-FunctionError {
 <#
 .SYNOPSIS
 Use this when something is wrong but you want to respect -ErrorAction
@@ -550,7 +548,6 @@ Example:
                         -Category ObjectNotFound `
                         -TargetObject $Path
 #>
-function _Write-FunctionError {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$Message,
@@ -566,11 +563,11 @@ function _Write-FunctionError {
   $PSCmdlet.WriteError($er)
 }
 
+function Read-FirstBytes {
 <#
 .SYNOPSIS
-  Safe(shared) read of up to Count bytes from the start of a file.
+Safe(shared) read of up to Count bytes from the start of a file.
 #>
-function Read-FirstBytes {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][IO.FileInfo]$File,
@@ -597,11 +594,11 @@ function Read-FirstBytes {
 }
 
 
+function _Get-FileBomFromPrefix {
 <#
 .SYNOPSIS
-  Detect BOM and return presence, bytes, and a simple encoding label.
+Detect BOM and return presence, bytes, and a simple encoding label.
 #>
-function _Get-FileBomFromPrefix {
   [CmdletBinding()] param([Parameter(Mandatory)][byte[]]$Buffer)
   if($Buffer.Length -ge 4 -and $Buffer[0] -eq 0xFF -and $Buffer[1] -eq 0xFE -and $Buffer[2] -eq 0x00 -and $Buffer[3] -eq 0x00){ 
     return @{Exists=$true;Bytes=@(0xFF,0xFE,0x00,0x00);Enc='UTF-32LE'} 
@@ -621,9 +618,10 @@ function _Get-FileBomFromPrefix {
   @{Exists=$false;Bytes=@();Enc=$null}
 }
 
+function _Get-ByteSampleTextClassification {
 <#
 .SYNOPSIS
-  Classify a byte buffer sample as ASCII / NON-ASCII / BINARYorUTF1632 and infer line termination style.
+Classify a byte buffer sample as ASCII / NON-ASCII / BINARYorUTF1632 and infer line termination style.
 
 .DESCRIPTION
   Heuristic classifier intended for "text vs binary" decisions. Use it to quickly decide "safe to treat as text"
@@ -660,7 +658,6 @@ function _Get-FileBomFromPrefix {
 .PARAMETER Buffer
   Byte array to sample (only the first $MaxBytesToTest bytes are analyzed).
 #>
-function _Get-ByteSampleTextClassification {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][byte[]]$Buffer,
@@ -739,9 +736,10 @@ function _Get-ByteSampleTextClassification {
   [pscustomobject]@{ Content=$content; LineTermination=$lt }
 }
 
+function Test-ExeFound {
 <#
 .SYNOPSIS
-  Tests whether an executable can be resolved either as a full path or via PATH/PATHEXT.
+Tests whether an executable can be resolved either as a full path or via PATH/PATHEXT.
 
 .DESCRIPTION
   Accepts either:
@@ -751,7 +749,6 @@ function _Get-ByteSampleTextClassification {
       launching a process (Get-Command + PATHEXT).
   Returns $true if the executable can be found, otherwise $false.
 #>
-function Test-ExeFound {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory,Position=0)][string]$Exe
@@ -783,13 +780,13 @@ function Test-ExeFound {
 }
 
 
+function Invoke-Uchardet {
 <#
 .SYNOPSIS
-  Runs uchardet with safe quoting and a hard timeout.
+Runs uchardet with safe quoting and a hard timeout.
 .DESCRIPTION
   Never throws; returns a result object with Ok/Encoding, or ErrorMessage on failure.
 #>
-function Invoke-Uchardet {
   [CmdletBinding()] param(
     [Parameter(Mandatory)][string]$FilePath,
     [string]$ExePath='uchardet',
@@ -913,9 +910,10 @@ function _Resolve-TextEncodingString {
   try { [Text.Encoding]::GetEncoding($name) } catch { $null }
 }
 
+function Resolve-FileFromPath {
 <#
 .SYNOPSIS
-  Resolve a path to exactly one existing FileSystem file ([IO.FileInfo]) or return $null.
+Resolve a path to exactly one existing FileSystem file ([IO.FileInfo]) or return $null.
 
 .DESCRIPTION
   Accepts a path (or FileInfo/DirectoryInfo) and enforces strict "one real file" semantics:
@@ -930,7 +928,6 @@ function _Resolve-TextEncodingString {
 .OUTPUTS
   System.IO.FileInfo or $null.
 #>
-function Resolve-FileFromPath {
   [CmdletBinding()] param([Parameter(Mandatory)][object]$Path)
 
   $orig=$Path
@@ -993,11 +990,11 @@ function Resolve-FileFromPath {
   [IO.FileInfo]$item
 }
 
+function Get-NewlineStyle {
 <#
 .SYNOPSIS
-  Detect newline style in a decoded string. Returns 'CRLF','LF','CR','Mixed','None','NotChecked'.
+Detect newline style in a decoded string. Returns 'CRLF','LF','CR','Mixed','None','NotChecked'.
 #>
-function Get-NewlineStyle {
   [CmdletBinding()] param(
     [Parameter(Mandatory)][string]$Text
   )
@@ -1104,9 +1101,10 @@ function _Gte_LeaveIsoOrSwitchToWin {
   return $UchardetEncoding
 }
 
+function Get-TextFileEncoding {
 <#
 .SYNOPSIS
-  Detect (if possible) or guess the encoding of Text Files.
+Detect (if possible) or guess the encoding of Text Files.
 .DESCRIPTION
   Uses uchardet (CLI) and simple BOM/ASCII checks.
   Returns an object like this:
@@ -1169,7 +1167,6 @@ Operating System | Notepad  | > a.txt | Out-File  | > or Out-File
 TODO:
 Offer help on how to install uchardet if not found.
 #>
-function Get-TextFileEncoding {
   [CmdletBinding(SupportsShouldProcess=$false)]
   param(
     [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]
@@ -1330,8 +1327,7 @@ function Get-TextFileEncoding {
 function Remove-TypographyUnicodeFromTextFile {
 <#
 .SYNOPSIS
-Substitutes Unicode typography characters with ASCII characters in one or
-more target text files. Mimics the interface of Edit-TextFile.
+Substitutes Unicode typography characters with ASCII characters in one or more target text files. Mimics the interface of Edit-TextFile.
 
 .DESCRIPTION
 Modifies the specified file or files (if you use wildcards like *.txt) 
