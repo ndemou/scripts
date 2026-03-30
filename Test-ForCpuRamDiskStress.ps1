@@ -2,8 +2,47 @@
 .SYNOPSIS
 Prints a detailed warning every time it finds RAM, CPU or Disks are stressed
 
+.DESCRIPTION
+There are two modes of operation: monitoring and log file analysis.
+
+In monitor mode (the default) it prints a detailed warning every
+time it finds RAM, CPU or Disks are stressed.
+
+In monitor mode these switches may be used.
+    -MonitorVolumes:   Will also monitor IO stress of Volumes
+    -DontMonitorDisks: Will NOT monitor  IO stress of disks
+
+In log analysis (invoked if you supply a -LogFile) it creates a
+summary report based on the contents of the log file.
+
+In log analysis mode these arguments may be used.
+    -Granularity
+    -LogsToIgnoreRegex
+
 .EXAMPLE
-C:> c:\it\bin\Test-ForCpuRamDiskStress.ps1 | Tee-Object "C:\it\temp\CpuRamDiskStress.log"
+Download & Setup to always run on startup
+```
+$bin="C:\IT\bin";$log="C:\it\log"
+$f="Test-ForCpuRamDiskStress.ps1";mkdir $bin -force >$null;mkdir $log -force > $null
+iwr -useb https://ndemou.github.io/scripts/$f -OutFile $bin\$f
+
+$f="helpers-processes.ps1"; iwr -useb https://ndemou.github.io/scripts/$f -OutFile $bin\$f; . $bin\$f
+New-ScheduledTaskForPSScript -ScriptPath "$bin\Test-ForCpuRamDiskStress.ps1" -ScheduleType Startup -ScriptArguments "-LogDir",$log
+Start-ScheduledTask -TaskPath '\enLogic\' -TaskName 'Execute Test-ForCpuRamDiskStress.ps1'
+```
+.EXAMPLE
+# Get statistics for a particular date
+& $bin\Test-ForCpuRamDiskStress.ps1 -Granularity 10m -LogFile C:\it\log\CpuRamDiskStress.2026-01-14.log
+
+
+.EXAMPLE
+# If you want to run only once:
+& C:\IT\bin\Test-ForCpuRamDiskStress.ps1 -LogDir c:\it\log -LogBaseName 'CpuRamDiskStress'
+
+.EXAMPLE
+What you see if memory is under pressure.
+```
+C:\IT\bin\Test-ForCpuRamDiskStress.ps1 | Tee-Object "C:\it\temp\CpuRamDiskStress.log"
 
 20:12:47 HIGH <HOSTNAME> Reasons:
  - Available memory minimum 0,5% is below the 5% threshold while average Page Reads/sec is  319, above the 150 threshold. Low headroom with active hard faults indicates real stress.
@@ -23,23 +62,7 @@ Measurements:
  - File cache memory: 4 MB
  - Modified page list: 134 MB
  - Compressed memory: 0 MB
-
-.DESCRIPTION
-There are two modes of operation: monitoring and log file analysis.
-
-In monitor mode (the default) it prints a detailed warning every
-time it finds RAM, CPU or Disks are stressed.
-
-In monitor mode these switches may be used.
-    -MonitorVolumes:   Will also monitor IO stress of Volumes
-    -DontMonitorDisks: Will NOT monitor  IO stress of disks
-
-In log analysis (invoked if you supply a -LogFile) it creates a
-summary report based on the contents of the log file.
-
-In log analysis mode these arguments may be used.
-    -Granularity
-    -LogsToIgnoreRegex
+```
 #>
 
 param(
@@ -119,55 +142,7 @@ Operational Notes
 - Disk latency averages are over the same 18s window; spikes may be smoothed--use with the sustained rule.
 
 
-********************************************
-********************************************
-********************************************
-EXAMPLE OF HOW TO DOWNLOAD, INSTALL (setup scheduled task) AND START
-********************************************
-********************************************
-********************************************
-    $folder          = "C:\it\bin"
-    $scriptName      = "Test-ForCpuRamDiskStress.ps1"
-    $arguments       = '-LogBaseName "CpuRamDiskStress" -LogDir "C:\it\log"'
-    $scriptFullName  = "$folder\$scriptName"
-    $taskName        = "$($scriptName -replace '\.ps1$') (enLogic)"
-    $taskDescription = "Run $scriptFullName on system startup"
 
-    # DOWNLOAD
-    #----------------------------
-    iwr -useb https://wiki.enlogic.gr/pub/KnowledgeBase/PublicFiles/$scriptName -OutFile "$scriptFullName"
-
-    # CREATE SCHEDULED TASK that runs the script on startup using the SYSTEM account
-    #-------------------------------------------------------------------------------
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument (
-        '-NoLogo -NoProfile -ExecutionPolicy Bypass ' +
-        '-File "' + $scriptFullName + '" ' +
-        $arguments
-    )
-
-    $trigger   = New-ScheduledTaskTrigger  -AtStartup
-
-    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' `
-                                            -LogonType ServiceAccount `
-                                            -RunLevel Highest
-
-    $settings  = New-ScheduledTaskSettingsSet `
-                    -AllowStartIfOnBatteries `
-                    -DontStopIfGoingOnBatteries `
-                    -MultipleInstances IgnoreNew
-
-    Register-ScheduledTask -TaskName $taskName `
-                           -Action $action `
-                           -Trigger $trigger `
-                           -Principal $principal `
-                           -Settings $settings `
-                           -Description $taskDescription `
-                           -Force
-
-    Start-ScheduledTask -TaskName $taskName 
-    
-    # You can remove the scheduled task like this:
-    # Unregister-ScheduledTask -TaskName $taskName
 
 ********************************************
 ********************************************
