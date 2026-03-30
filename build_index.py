@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 TITLE = "Nick's Scripts"
 REPO_URL = "https://github.com/ndemou/scripts"
+DOWNLOAD_BASE_URL = "https://ndemou.github.io/scripts"
 SCRIPT_EXTENSIONS = {".ps1", ".sh"}
 HELP_DIRECTIVE_RE = re.compile(r"^\s*\.(?P<name>[A-Z][A-Z0-9_-]*)\b", re.IGNORECASE)
 FUNCTION_HEADER_RE = re.compile(
@@ -31,6 +32,7 @@ class ScriptDoc:
 class FunctionDoc:
     name: str
     synopsis: str | None
+    details: str | None
 
 
 def normalize_comment_lines(lines: list[str]) -> list[str]:
@@ -223,6 +225,7 @@ def extract_function_docs(text: str) -> list[FunctionDoc]:
                 j += 1
 
             synopsis = None
+            details = None
             if j < len(lines) and lines[j].strip().startswith("<#"):
                 block: list[str] = []
                 while j < len(lines):
@@ -231,9 +234,10 @@ def extract_function_docs(text: str) -> list[FunctionDoc]:
                         break
                     j += 1
                 comment_lines = strip_block_comment_markers(block)
-                synopsis = extract_explicit_synopsis(comment_lines)
+                synopsis, details = extract_synopsis(comment_lines)
+                details = cleanup_details(details)
 
-            docs.append(FunctionDoc(name=name, synopsis=synopsis))
+            docs.append(FunctionDoc(name=name, synopsis=synopsis, details=details))
 
         brace_depth += line.count("{") - line.count("}")
         if brace_depth < 0:
@@ -296,20 +300,35 @@ def render_text_block(text: str, css_class: str, bold_directives: bool = False) 
 def render_function_docs(function_docs: list[FunctionDoc]) -> str:
     items = []
     for function_doc in function_docs:
-        item = f"<strong>{html.escape(function_doc.name)}</strong>"
+        item_lines = [
+            '          <div class="function-entry">',
+            f'            <p class="function-name"><strong>{html.escape(function_doc.name)}</strong></p>',
+        ]
         if function_doc.synopsis:
             synopsis = html.escape(" ".join(part.strip() for part in function_doc.synopsis.splitlines() if part.strip()))
-            item += f": {synopsis}"
-        items.append(f"            <li>{item}</li>")
+            item_lines.append(f'            <p class="function-synopsis">{synopsis}</p>')
+        if function_doc.details:
+            item_lines.extend(
+                [
+                    '            <details class="script-details function-details">',
+                    '              <summary>Read more</summary>',
+                    render_text_block(function_doc.details, "script-details-text", bold_directives=True).replace(
+                        '          <p class="script-details-text">',
+                        '              <p class="script-details-text">',
+                    ),
+                    "            </details>",
+                ]
+            )
+        item_lines.append("          </div>")
+        items.append("\n".join(item_lines))
 
     return "\n".join(
         [
             "        <details class=\"script-details\">",
             "          <summary>Read more</summary>",
-            "          <div class=\"script-details-text\">Functions:</div>",
-            "          <ul class=\"function-list\">",
+            "          <div class=\"function-panel\">",
             *items,
-            "          </ul>",
+            "          </div>",
             "        </details>",
         ]
     )
@@ -317,9 +336,23 @@ def render_function_docs(function_docs: list[FunctionDoc]) -> str:
 
 def render_item(doc: ScriptDoc) -> str:
     relative_path = doc.path.relative_to(ROOT).as_posix()
+    copy_command = f'$dir="C:\\IT\\bin";$f="{relative_path}";mkdir $dir -force >$null;iwr -useb {DOWNLOAD_BASE_URL}/$f -out $dir\\$f'
     parts = [
         "      <li class=\"script-item\">",
-        f'        <a class="script-link" href="{html.escape(relative_path)}">{html.escape(relative_path)}</a>',
+        "        <div class=\"script-header\">",
+        f'          <a class="script-link" href="{html.escape(relative_path)}">{html.escape(relative_path)}</a>',
+        (
+            '          <button class="copy-button" '
+            f'data-copy="{html.escape(copy_command, quote=True)}" '
+            f'title="Copy download command for {html.escape(relative_path, quote=True)}" '
+            f'aria-label="Copy download command for {html.escape(relative_path, quote=True)}">'
+            '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+            '<path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path>'
+            '<path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path>'
+            "</svg>"
+            "          </button>"
+        ),
+        "        </div>",
     ]
 
     if doc.synopsis:
@@ -366,6 +399,22 @@ def build_html(docs: list[ScriptDoc]) -> str:
       <a href="{html.escape(REPO_URL)}">{html.escape(REPO_URL.removeprefix("https://"))}</a>
     </p>
   </main>
+  <script>
+    document.addEventListener("click", async (event) => {{
+      const button = event.target.closest(".copy-button");
+      if (!button) return;
+      const text = button.getAttribute("data-copy");
+      if (!text) return;
+      try {{
+        await navigator.clipboard.writeText(text);
+        button.classList.add("copied");
+        setTimeout(() => button.classList.remove("copied"), 1200);
+      }} catch {{
+        button.classList.add("copy-failed");
+        setTimeout(() => button.classList.remove("copy-failed"), 1200);
+      }}
+    }});
+  </script>
 </body>
 </html>
 """

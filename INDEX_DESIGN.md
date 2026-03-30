@@ -168,7 +168,14 @@ Inside the expandable section:
 
 - Function names must be bold.
 - The list should be easy to scan.
-- A normal unordered list inside the expandable section is appropriate.
+- Do not render the helper-function inventory in a monospace font.
+- Do not render the helper-function inventory as an unordered list.
+- Render one paragraph-like entry per function.
+- When a function has a synopsis, place that synopsis under the function name.
+- Do not show a `Functions:` header inside the expandable helper-function block.
+- Do not place separator lines between function entries.
+- If a function has help content beyond `.SYNOPSIS`, render a nested `Read more` block for that function using the same expandable pattern used for script help.
+- Nested function-level `Read more` blocks should be visually compact and only as tall as needed for their own text.
 
 ### Function parsing constraints
 
@@ -191,6 +198,19 @@ The script name should be:
 
 - slightly larger than normal body text
 - visually stronger than the synopsis
+- accompanied by a small copy icon/button
+
+### Copy command action
+
+Each script entry should include a copy action next to the script name.
+
+That action should copy this PowerShell download command, with the script-relative filename substituted into `<THE_SCRIPTS_NAME>`:
+
+```powershell
+$dir="C:\IT\bin";$f="<THE_SCRIPTS_NAME>";mkdir $dir -force >$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f
+```
+
+The copy control should feel lightweight and integrated with the script title row.
 
 ### No leading dot artifact
 
@@ -246,8 +266,10 @@ A suitable generator should:
 Associated CSS should provide:
 
 - stronger script-link styling
+- aligned script title row with a compact copy icon
 - bullet-free script entry layout
 - consistent `Read more` styling
 - monospace expanded help blocks
 - emphasized directive lines
-- styled helper function lists
+- styled helper function panels
+- compact nested function-level expandable panels
