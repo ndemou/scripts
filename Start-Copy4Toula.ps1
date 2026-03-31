@@ -11,27 +11,23 @@ Begin by opening a terminal and dot-sourcing this script. E.g.:
 
 Then repeat these steps:
   1. Copy code from the LLM
-  2. Run `q` in the terminal
+  2. Run `q` in the terminal (it will execute the code _and_ copy back the results)
   3. Go back to the LLM and click to paste the clipboard.
-
-Every time you run `q` it:
-  - Reads code from the clipboard.
-  - Executes it.
-  - Automatically copies the output back to the clipboard.
-
-    It will copy up to 3000 lines by default. Change like this: 
-       $global:SctMaxLinesToCopy = 4000
 
 If you run commands directly (without `q`) use `ccc` to copy all output 
 since the last time you run either `q` or `ccc`.
 
-UNDER THE HOOD
---------------
-The script maintains two transcript files per PowerShell process:
-  1. `$env:TEMP\Toula-the-fixer-$PID.txt`
-     Stores the most recent chunk of output.
-  2. `$env:TEMP\Toula-the-fixer-$PID.full.txt`
-     Stores the cumulative raw history for the current session.
+DETAILS
+-------
+The script maintains two transcript files:
+ - `$env:TEMP\TTFtrans-$PID.full.txt` has the cumulative raw history of the full session.
+ - `$env:TEMP\TTFtrans-$PID.txt` has just the most recent chunk of output.
+
+q & ccc will copy up to 3000 lines by default. You can change the limit: 
+    $global:SctMaxLinesToCopy = 4000
+
+The output of some rare legacy tools may not appear in the transcript.
+It's extremely rare though and you can always copy-paste manually.
 
 .EXAMPLE
 . .\Start-Copy4Toula.ps1
@@ -62,11 +58,11 @@ function Write-SctConsoleDirect {
 }
 
 function Get-SctTranscriptPath {
-    "$env:TEMP\Toula-the-fixer-$PID.txt"
+    "$env:TEMP\TTFtrans-$PID.txt"
 }
 
 function Get-SctFullTranscriptPath {
-    "$env:TEMP\Toula-the-fixer-$PID.full.txt"
+    "$env:TEMP\TTFtrans-$PID.full.txt"
 }
 
 function Strip-SctTranscriptBlocks {
@@ -537,11 +533,11 @@ if ($isDotSourced) {
         Write-SctConsoleDirect -Message "Full transcript: $fullPath" -Color DarkGray
     }
 } else {
-    $oldFiles = Get-ChildItem -Path $env:TEMP -Filter "Toula-the-fixer-*.txt*" -ErrorAction SilentlyContinue
+    $oldFiles = Get-ChildItem -Path $env:TEMP -Filter "TTFtrans-*.txt*" -ErrorAction SilentlyContinue
     $cleanedCount = 0
 
     foreach ($file in $oldFiles) {
-        if ($file.Name -match 'Toula-the-fixer-(\d+)(?:\.full)?\.txt') {
+        if ($file.Name -match 'TTFtrans-(\d+)(?:\.full)?\.txt') {
             $filePid = $matches[1]
             if (-not (Get-Process -Id $filePid -ErrorAction SilentlyContinue)) {
                 Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
