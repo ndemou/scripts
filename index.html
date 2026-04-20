@@ -8,10 +8,7 @@
 </head>
 <body>
   <main class="card">
-    <h1>Nick&#x27;s Scripts</h1>
-    <p>PowerShell and shell scripts published via GitHub Pages.</p>
-
-    <h2>Available downloads</h2>
+    <h1>Available scripts & functions</h2>
     <ul class="script-list">
       <li class="script-item">
         <div class="script-header">
@@ -56,6 +53,8 @@
           <p class="script-details-text">Use this for first-pass reboot and shutdown triage. It helps answer<br>whether a recent restart was clean, unexpected, crash-related, planned<br>by an administrator or process, or associated with Windows Updates.</p>
           <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Produces one PSCustomObject per matching event:<br>Level       : Event level text.<br>Time        : Event time.<br>Kind        : Event category. One of:<br>Boot, NormalShutdown, PlannedShutdownOrRestart,<br>WindowsUpdatesInstallStarted, WindowsUpdatesInstallCompleted,<br>WindowsUpdatesRestartRequired, WindowsUpdatesRestart<br>BugCheck, CrashDump, AbnormalShutdown,<br>UnexpectedShutdownFollowup, Other<br>Description : First line of the event message with source metadata<br>appended as &quot;(id &lt;n&gt; from &lt;provider&gt;)&quot;.</p>
           <p class="script-details-text">Intentionally excludes noise about Microsoft Defender updates.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>PS C:\&gt; Get-BootShutdownEvents |ft</p>
+          <p class="script-details-text">Level Time         Kind                       Description<br>Info  15/3 6:00:47 WindowsUpdatesInstallStart Installation Started: Windows has started installing the following update: 2026-03 Cumulative Update for Microsoft ...<br>Info  15/3 6:19:54 WindowsUpdatesRestart      The process C:\WINDOWS\system32\shutdown.exe (SRV2) has initiated the restart of computer SRV2 ...<br>Info  15/3 6:22:06 NormalShutdown             The Event log service was stopped. (id 6006 from EventLog)<br>Info  15/3 6:22:12 NormalShutdown             The operating system is shutting down at system time  2026 - 03 - 15T04:22:12.144072600Z. (id 13 from Microsoft-Windows-Kernel-General)<br>Info  15/3 6:22:14 Boot                       The operating system started at system time  2026 - 03 - 15T04:22:14.500000000Z. (id 12 from Microsoft-Windows-Kernel-General)<br>Info  15/3 6:22:22 Boot                       The Event log service was started. (id 6005 from EventLog)<br>Info  15/3 6:22:44 WindowsUpdatesRestart      The process C:\WINDOWS\servicing\TrustedInstaller.exe (SRV2) has initiated the restart of computer SRV2...<br>Info  15/3 6:22:45 NormalShutdown             The Event log service was stopped. (id 6006 from EventLog)<br>Info  15/3 6:22:51 NormalShutdown             The operating system is shutting down at system time  2026 - 03 - 15T04:22:51.294803800Z. (id 13 from Microsoft-Windows-Kernel-General)<br>Info  15/3 6:22:53 Boot                       The operating system started at system time  2026 - 03 - 15T04:22:53.500000000Z. (id 12 from Microsoft-Windows-Kernel-General)<br>Info  15/3 6:22:59 Boot                       The Event log service was started. (id 6005 from EventLog)<br>Info  15/3 6:23:20 WindowsUpdatesInstallCompl Installation Successful: Windows successfully installed the following update: 2026-03 Cumulative Update for Microsoft ...</p>
         </details>
       </li>
       <li class="script-item">
@@ -100,6 +99,21 @@
             <details class="script-details function-details">
               <summary>Read more</summary>
               <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-HardLinks|Format-List</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>New-ZipFromFolder</strong></p>
+            <p class="function-synopsis">Creates a zip file from a folder, keeping the folder as the top-level entry and allowing for exclusions.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Packages the source folder into a zip file whose top-level folder name<br>matches the source folder name. Allows for recursive exclusions based<br>on file name, folder name, or relative path.</p>
+              <p class="script-details-text">Creates a sibling staging folder next to the source folder and removes<br>it before returning. On NTFS volumes, included files are staged as<br>hardlinks unless DontUseHardLinks is set. Hardlinking is super-fast.</p>
+              <p class="script-details-text">.PARAMETER Exclude<br>Wildcard patterns used to skip files or folders anywhere under the<br>source folder. A pattern can match an item name or a relative path.</p>
+              <p class="script-details-text">.PARAMETER NoCompression<br>When set, writes the archive without compression.</p>
+              <p class="script-details-text">.PARAMETER Fast<br>When set, writes the archive with the fastest compression level.</p>
+              <p class="script-details-text">.PARAMETER DontUseHardLinks<br>When set, stages included files by copying them; otherwise the function<br>uses hardlinks when the source volume supports them.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>New-ZipFromFolder .\App .\App.zip `<br>-Exclude &#x27;*.bak&#x27;,&#x27;*.tmp&#x27;,&#x27;.git&#x27;</p>
+              <p class="script-details-text">Creates the zip while skipping matching files and folders under App.</p>
             </details>
           </div>
           </div>
@@ -402,11 +416,11 @@
           <summary>Read more</summary>
           <p class="script-details-text">HOW TO USE<br>Begin by opening a terminal and dot-sourcing this script. E.g.:</p>
           <p class="script-details-text">$p=&quot;C:\IT\bin&quot;;$f=&quot;Start-Copy4Toula.ps1&quot;;mkdir $p -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $p\$f; . $p\$f</p>
-          <p class="script-details-text">Then repeat these steps:<br>1. Copy code from the LLM<br>2. Run `q` in the terminal<br>3. Go back to the LLM and click to paste the clipboard.</p>
-          <p class="script-details-text">Every time you run `q` it:<br>- Reads code from the clipboard.<br>- Executes it.<br>- Automatically copies the output back to the clipboard.</p>
-          <p class="script-details-text">It will copy up to 3000 lines by default. Change like this:<br>$global:SctMaxLinesToCopy = 4000</p>
+          <p class="script-details-text">Then repeat these steps:<br>1. Copy code from the LLM<br>2. Run `q` in the terminal (it will execute the code _and_ copy back the results)<br>3. Go back to the LLM and click to paste the clipboard.</p>
           <p class="script-details-text">If you run commands directly (without `q`) use `ccc` to copy all output<br>since the last time you run either `q` or `ccc`.</p>
-          <p class="script-details-text">UNDER THE HOOD<br>The script maintains two transcript files per PowerShell process:<br>1. `$env:TEMP\Toula-the-fixer-$PID.txt`<br>Stores the most recent chunk of output.<br>2. `$env:TEMP\Toula-the-fixer-$PID.full.txt`<br>Stores the cumulative raw history for the current session.</p>
+          <p class="script-details-text">DETAILS<br>The script maintains two transcript files:<br>- `$env:TEMP\TTFtrans-$PID.full.txt` has the cumulative raw history of the full session.<br>- `$env:TEMP\TTFtrans-$PID.txt` has just the most recent chunk of output.</p>
+          <p class="script-details-text">q &amp; ccc will copy up to 3000 lines by default. You can change the limit:<br>$global:SctMaxLinesToCopy = 4000</p>
+          <p class="script-details-text">The output of some rare legacy tools may not appear in the transcript.<br>It&#x27;s extremely rare though and you can always copy-paste manually.</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>. .\Start-Copy4Toula.ps1<br>q<br>q</p>
         </details>
       </li>
@@ -428,6 +442,18 @@
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>If you want to run only once:<br>&amp; C:\IT\bin\Test-ForCpuRamDiskStress.ps1 -LogDir c:\it\log -LogBaseName &#x27;CpuRamDiskStress&#x27;</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>What you see if memory is under pressure.<br>C:\IT\bin\Test-ForCpuRamDiskStress.ps1 | Tee-Object &quot;C:\it\temp\CpuRamDiskStress.log&quot;</p>
           <p class="script-details-text">20:12:47 HIGH &lt;HOSTNAME&gt; Reasons:<br>- Available memory minimum 0,5% is below the 5% threshold while average Page Reads/sec is  319, above the 150 threshold. Low headroom with active hard faults indicates real stress.<br>- High classification gate satisfied: Available memory(%) minimum 0,5 is below the 10% gate threshold.<br>Measurements:<br>- Time window: 18 secs (9 samples)<br>- Available memory: average 68,3%, minimum 0,5%<br>- Committed memory: average 31,9%, maximum 67,0%<br>- Paging file usage: maximum 73%<br>- Page Reads/sec (hard faults): average 319, maximum 1.789<br>- Page Writes/sec: average 23, maximum 203<br>- Transition Faults/sec: average 1.281, maximum 6.797<br>- Disk read latency: average 0,0 ms<br>- Disk write latency: average 0,0 ms<br>- Disk queue length: average 7,3<br>- Standby cache memory: Normal 58 MB, Reserve 222 MB, Core 0 MB<br>- File cache memory: 4 MB<br>- Modified page list: 134 MB<br>- Compressed memory: 0 MB</p>
+        </details>
+      </li>
+      <li class="script-item">
+        <div class="script-header">
+          <a class="script-link" href="Update-GetHealthCode.ps1">Update-GetHealthCode.ps1</a>
+          <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Update-GetHealthCode.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Update-GetHealthCode.ps1" aria-label="Copy download command for Update-GetHealthCode.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
+        </div>
+          <p class="script-synopsis">Ensures all health-check scripts and PS Modules are installed &amp; up-to-date.</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <p class="script-details-text">Missing files are created. Existing files that differ are replaced.<br>Identical files are left unchanged. If this script updates itself,<br>it re-invokes the updated copy. When replacing a file, backup copies<br>are created in the backups directory.<br>Will set PSGallery as Trusted.</p>
+          <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>None.</p>
         </details>
       </li>
       <li class="script-item">
