@@ -389,6 +389,59 @@
       </li>
       <li class="script-item">
         <div class="script-header">
+          <a class="script-link" href="Out-PingStats.ps1">Out-PingStats.ps1</a>
+          <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Out-PingStats.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Out-PingStats.ps1" aria-label="Copy download command for Out-PingStats.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
+        </div>
+          <p class="script-synopsis">Continuously pings a host, or a small set of public hosts, and displays live connection-quality statistics.</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <p class="script-details-text">Out-PingStats is an interactive terminal monitor for ICMP latency and packet loss.</p>
+          <p class="script-details-text">When you specify -Target, it continuously pings that host and renders live graphs and summaries for:<br>- recent RTT values<br>- RTT histogram<br>- rolling loss percentage<br>- rolling one-way jitter estimate<br>- rolling RTT 95th percentile</p>
+          <p class="script-details-text">When you omit -Target, it probes a few well-known Internet hosts in parallel and treats the result as a rough<br>&quot;Internet reachability and quality&quot; indicator rather than a measurement for one exact destination.</p>
+          <p class="script-details-text">The display updates continuously until you stop it, typically with Ctrl+C.</p>
+          <p class="script-details-text">This command is intended for human monitoring in a console window. Its primary output is a live screen display,<br>not pipeline-friendly structured objects.</p>
+          <p class="script-details-text">For best-looking graphs, use a monospace font with good Unicode block-character support. DejaVu Sans Mono works<br>well. Consolas usually forces lower-resolution graph characters.</p>
+          <p class="script-details-text">.INTERACTIVE CONTROLS<br>While the monitor is running, you can use:<br>Ctrl-H  Toggle RTT histogram<br>Ctrl-R  Toggle recent-RTT graph<br>Ctrl-L  Toggle loss graph<br>Ctrl-J  Toggle jitter graph<br>Ctrl-S  Toggle graph character set / font mode</p>
+          <p class="script-details-text">.PARAMETER Target<br>Host name or IP address to probe.</p>
+          <p class="script-details-text">If omitted, the command monitors general Internet quality by pinging several public hosts in parallel.</p>
+          <p class="script-details-text">.PARAMETER Title<br>Custom title shown at the top of the screen.</p>
+          <p class="script-details-text">By default, the title is derived from -Target, or shows a generic Internet-oriented title when -Target is omitted.</p>
+          <p class="script-details-text">.PARAMETER GraphMax<br>Upper Y-axis limit for RTT graphs.</p>
+          <p class="script-details-text">By default, the command chooses a sensible value automatically.</p>
+          <p class="script-details-text">.PARAMETER PingsPerSec<br>Deprecated. Currently has no practical effect.</p>
+          <p class="script-details-text">.PARAMETER GraphMin<br>Lower Y-axis limit for RTT graphs.</p>
+          <p class="script-details-text">By default, the command chooses a sensible value automatically.</p>
+          <p class="script-details-text">.PARAMETER HistBucketsCount<br>Number of buckets to use in the RTT histogram.</p>
+          <p class="script-details-text">.PARAMETER AggregationSeconds<br>Number of seconds per aggregation period for the slower trend graphs such as loss, jitter, and RTT 95th percentile.</p>
+          <p class="script-details-text">.PARAMETER HistSamples<br>Number of recent samples to include in the RTT histogram.</p>
+          <p class="script-details-text">If omitted, the default is at least 100 samples and otherwise about one minute of samples.</p>
+          <p class="script-details-text">.PARAMETER Visual<br>Reserved legacy parameter. Do not rely on it.</p>
+          <p class="script-details-text">.PARAMETER DebugMode<br>Enables diagnostic behavior and reduces screen-clearing behavior to help troubleshoot parsing, aggregation,<br>or rendering issues.</p>
+          <p class="script-details-text">.PARAMETER DebugData<br>Enables extra debug-data collection.</p>
+          <p class="script-details-text">.PARAMETER HighResFont<br>Controls graph-character mode.</p>
+          <p class="script-details-text">-1 = auto-detect<br>0 = force low-resolution characters<br>1 = force high-resolution characters</p>
+          <p class="script-details-text">Use low-resolution mode for terminals or fonts that do not render the Unicode block characters cleanly.</p>
+          <p class="script-details-text">.PARAMETER UpdateScreenEvery<br>How often, in seconds, the screen is refreshed.</p>
+          <p class="script-details-text">Lower values make the display more responsive but may increase CPU use.</p>
+          <p class="script-details-text">.PARAMETER BarGraphSamples<br>How many recent samples to show in the scrolling bar graphs.</p>
+          <p class="script-details-text">By default, the command derives this from the current console width.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Out-PingStats google.com</p>
+          <p class="script-details-text">Continuously monitors latency, loss, jitter, and latency distribution to google.com.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Out-PingStats 1.1.1.1 -Title &quot;Cloudflare DNS&quot;</p>
+          <p class="script-details-text">Monitors 1.1.1.1 and shows a custom title.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Out-PingStats</p>
+          <p class="script-details-text">Shows a rough live view of general Internet quality by probing several public hosts in parallel.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Out-PingStats 8.8.8.8 -GraphMin 0 -GraphMax 100 -AggregationSeconds 60</p>
+          <p class="script-details-text">Monitors 8.8.8.8 with fixed RTT graph limits and 1-minute aggregation windows.</p>
+          <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>This command starts background jobs and cleans them up when it exits.</p>
+          <p class="script-details-text">It also writes temporary screen/statistics data files under $env:TEMP.</p>
+          <p class="script-details-text">Loss, jitter, and percentile values are intended for operational monitoring, not for strict scientific measurement.</p>
+          <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>None. This command is designed for interactive console display.</p>
+          <p class="script-details-text"><span class="detail-directive">.INPUTS</span><br>None. This command does not accept pipeline input.</p>
+        </details>
+      </li>
+      <li class="script-item">
+        <div class="script-header">
           <a class="script-link" href="Run-DismSfc.ps1">Run-DismSfc.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Run-DismSfc.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Run-DismSfc.ps1" aria-label="Copy download command for Run-DismSfc.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
