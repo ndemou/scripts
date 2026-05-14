@@ -3,19 +3,21 @@
 Minimize copy-pasting and typing while using an LLM like Toula-the-fixer to troubleshoot issues.
 
 .DESCRIPTION
-HOW TO USE
-----------
+HOW TO USE ME
+-------------
 Begin by opening a terminal and dot-sourcing this script. E.g.:
     
-    $p="C:\IT\bin";$f="Start-Copy4Toula.ps1";mkdir $p -force >$null;iwr -useb https://ndemou.github.io/scripts/$f -out $p\$f; . $p\$f
+    $p="C:\IT\bin";$f="Start-Copy4Toula.ps1";mkdir $p -force >$null
+    iwr -useb https://ndemou.github.io/scripts/$f -out $p\$f
+    . C:\IT\bin\Start-Copy4Toula.ps1
 
 Then repeat these steps:
   1. Copy code from the LLM
   2. Run `q` in the terminal (it will execute the code _and_ copy back the results)
-  3. Go back to the LLM and click to paste the clipboard.
+  3. Go back to the LLM and paste the output.
 
-If you run commands directly (without `q`) use `ccc` to copy all output 
-since the last time you run either `q` or `ccc`.
+If you run commands directly, or accidentally press ctrl-C you can
+run `ccc` to copy all output since the last time you run either `q` or `ccc`.
 
 DETAILS
 -------
@@ -23,8 +25,8 @@ The script maintains two transcript files:
  - `$env:TEMP\TTFtrans-$PID.full.txt` has the cumulative raw history of the full session.
  - `$env:TEMP\TTFtrans-$PID.txt` has just the most recent chunk of output.
 
-q & ccc will copy up to 3000 lines by default. You can change the limit: 
-    $global:SctMaxLinesToCopy = 4000
+q & ccc will copy up to 5000 lines by default. You can change the limit: 
+    $global:SctMaxLinesToCopy = 8000
 
 The output of some rare legacy tools may not appear in the transcript.
 It's extremely rare though and you can always copy-paste manually.
@@ -38,7 +40,7 @@ q
 #>
 
 if (-not $global:SctMaxLinesToCopy) {
-    $global:SctMaxLinesToCopy = 3000
+    $global:SctMaxLinesToCopy = 5000
 }
 
 function Write-SctConsoleDirect {
@@ -513,25 +515,28 @@ if ($isDotSourced) {
     Set-Alias -Name q -Value Invoke-CommandFromClipboard -Scope Global
     Start-SctTranscriptIfNeeded
 
-    if (-not $global:SctHelpersLoaded) {
-        $global:SctHelpersLoaded = $true
+    Write-SctConsoleDirect -Color Green -Message @"
+HOW TO USE ME
+-------------
+Repeat these steps:
+1. Copy code from the LLM
+2. Run `q` in the terminal (it will execute the code _and_ copy back the results)
+3. Go back to the LLM and paste the output.
 
-        Write-SctConsoleDirect -Message "DETAILS:" -Color DarkGray
-        Write-SctConsoleDirect -Message "All output since now will be recorded at: $fullPath" -Color DarkGray
-        Write-SctConsoleDirect -Message "The current chunk since last capture/reset will be recorded at: $transcriptPath" -Color DarkGray
-        Write-SctConsoleDirect -Message "Will copy at most $($global:SctMaxLinesToCopy) lines of output. Set `$global:SctMaxLinesToCopy to change this limit." -Color DarkGray
-        Write-SctConsoleDirect -Message ""
-        Write-SctConsoleDirect -Message "HOW TO USE ME:" -Color Green
-        Write-SctConsoleDirect -Message "1. Copy PowerShell code to the clipboard." -Color Green
-        Write-SctConsoleDirect -Message "2. Run q" -Color Green
-        Write-SctConsoleDirect -Message "3. The command output will also be copied to the clipboard." -Color Green
-        Write-SctConsoleDirect -Message "You can also run ccc manually to copy the current transcript chunk." -Color Green
-        Write-SctConsoleDirect -Message "NOTE: Some rare legacy tools may bypass the transcript." -Color Green
-    } else {
-        Write-SctConsoleDirect -Message "Helpers are already loaded. Alias 'q' points to Invoke-CommandFromClipboard." -Color Yellow
-        Write-SctConsoleDirect -Message "Current chunk transcript: $transcriptPath" -Color DarkGray
-        Write-SctConsoleDirect -Message "Full transcript: $fullPath" -Color DarkGray
-    }
+If you run commands directly, or accidentally press ctrl-C you can
+run `ccc` to copy all output since the last time you run either `q` or `ccc`.
+"@
+    Write-SctConsoleDirect -Color DarkGray -Message @"
+
+MORE DETAILS
+------------
+All* output since the begining will be recorded at: $fullPath
+Output since last capture will be recorded at     : $transcriptPath
+Will copy at most $($global:SctMaxLinesToCopy) lines of output. 
+    (Set `$global:SctMaxLinesToCopy to change this limit.)
+
+*: Some rare legacy tools may bypass the transcript.
+"@
 } else {
     $oldFiles = Get-ChildItem -Path $env:TEMP -Filter "TTFtrans-*.txt*" -ErrorAction SilentlyContinue
     $cleanedCount = 0
