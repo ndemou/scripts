@@ -17,7 +17,7 @@ Then repeat these steps:
   3. Go back to the LLM and paste the output.
 
 If you run commands directly, or accidentally press ctrl-C you can
-run `ccc` to copy all output since the last time you run either `q` or `ccc`.
+run `q -CopyOnly` to copy all output since the last time you run either `q`.
 
 DETAILS
 -------
@@ -25,7 +25,7 @@ The script maintains two transcript files:
  - `$env:TEMP\TTFtrans-$PID.full.txt` has the cumulative raw history of the full session.
  - `$env:TEMP\TTFtrans-$PID.txt` has just the most recent chunk of output.
 
-q & ccc will copy up to 5000 lines by default. You can change the limit: 
+`q` will copy up to 5000 lines by default. You can change the limit: 
     $global:SctMaxLinesToCopy = 8000
 
 The output of some rare legacy tools may not appear in the transcript.
@@ -193,7 +193,7 @@ function Get-SctCleanedUpText {
     # Remove helper invocation commands themselves
     while ($finalLines.Count -gt 0) {
         $lastLine = $finalLines[$finalLines.Count - 1]
-        if ($lastLine -match '^PS prompt>(?:ccc|q|Invoke-CommandFromClipboard)\s*$') {
+        if ($lastLine -match '^PS prompt>(?:q -CopyOnly|q -c|q|Invoke-CommandFromClipboard)\s*$') {
             $finalLines.RemoveAt($finalLines.Count - 1)
             while ($finalLines.Count -gt 0 -and $finalLines[$finalLines.Count - 1] -eq '') {
                 $finalLines.RemoveAt($finalLines.Count - 1)
@@ -379,13 +379,6 @@ function Save-SctTranscriptChunk {
     }
 }
 
-function ccc {
-    [CmdletBinding()]
-    param()
-
-    Save-SctTranscriptChunk -CopyToClipboard
-}
-
 function Show-ClipboardParseErrors {
     [CmdletBinding()]
     param(
@@ -524,13 +517,24 @@ function Clean-OldTranscripts {
     }
 }
 
+function Invoke-C4TCommand {
+    param(
+        [switch]$CopyOnly
+    )
+    if ($CopyOnly) {
+        $null = Save-SctTranscriptChunk -CopyToClipboard
+        return
+    }
+    Invoke-CommandFromClipboard
+}
+
 $transcriptPath = Get-SctTranscriptPath
 $fullPath = Get-SctFullTranscriptPath
 $isDotSourced = $MyInvocation.InvocationName -eq '.' -or $MyInvocation.InvocationName -eq 'source'
 
 if ($isDotSourced) {
     Clean-OldTranscripts
-    Set-Alias -Name q -Value Invoke-CommandFromClipboard -Scope Global
+    Set-Alias -Name q -Value Invoke-C4TCommand -Scope Global
     Start-SctTranscriptIfNeeded
 
     Write-SctConsoleDirect -Color Green -Message @"
@@ -542,7 +546,7 @@ Repeat these steps:
 3. Go back to the LLM and paste the output.
 
 If you run commands directly, or accidentally press ctrl-C you can
-run `ccc` to copy all output since the last time you run either `q` or `ccc`.
+run `q -CopyOnly` to copy all output since the last time you run `q`.
 "@
     Write-SctConsoleDirect -Color DarkGray -Message @"
 
