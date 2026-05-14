@@ -179,6 +179,60 @@ Converts release metadata to a stable marker string.
   return ("{0}|{1}|{2}" -f $slug, $tag, $id)
 }
 
+function Get-GetComputerHealthVersionFromMarker {
+<#
+.SYNOPSIS
+Extracts a comparable release version token from an installed/latest marker.
+.DESCRIPTION
+Returns values like 'v3.9.0' when the marker embeds a semantic-version tag,
+or $null when no version-like token can be identified.
+#>
+  [CmdletBinding()]
+  param([AllowNull()][string]$Marker)
+
+  if ([string]::IsNullOrWhiteSpace($Marker)) {
+    return $null
+  }
+
+  if ($Marker -match '(?i)\bv\d+\.\d+\.\d+\b') {
+    return $matches[0].ToLowerInvariant()
+  }
+
+  return $null
+}
+
+function Test-GetComputerHealthMarkerEquivalent {
+<#
+.SYNOPSIS
+Determines whether two release markers should be treated as the same installed version.
+.DESCRIPTION
+Markers are considered equivalent if they match exactly, or if both embed the
+same semantic-version token (for example GitHub marker vs manual-zip marker).
+#>
+  [CmdletBinding()]
+  param(
+    [AllowNull()][string]$LeftMarker,
+    [AllowNull()][string]$RightMarker
+  )
+
+  if ([string]::IsNullOrWhiteSpace($LeftMarker) -or [string]::IsNullOrWhiteSpace($RightMarker)) {
+    return $false
+  }
+
+  if ($LeftMarker -eq $RightMarker) {
+    return $true
+  }
+
+  $leftVersion = Get-GetComputerHealthVersionFromMarker -Marker $LeftMarker
+  $rightVersion = Get-GetComputerHealthVersionFromMarker -Marker $RightMarker
+
+  if ($leftVersion -and $rightVersion -and ($leftVersion -ieq $rightVersion)) {
+    return $true
+  }
+
+  return $false
+}
+
 function Get-GetComputerHealthLatestRelease {
 <#.SYNOPSIS
 Gets latest GitHub release metadata for the configured repository.
@@ -855,12 +909,20 @@ if ($latestReleaseMarker) {
     Write-Verbose "No stored installed release marker is available yet"
   }
 
-  if ((-not $Reinstall) -and $storedReleaseMarker -and ($storedReleaseMarker -eq $latestReleaseMarker)) {
-    Write-Verbose "Latest release already downloaded and -Reinstall was not specified; skipping update download"
+  if ((-not $Reinstall) -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $latestReleaseMarker)) {
+    $storedVersion = Get-GetComputerHealthVersionFromMarker -Marker $storedReleaseMarker
+    $latestVersion = Get-GetComputerHealthVersionFromMarker -Marker $latestReleaseMarker
+    if (($storedReleaseMarker -ne $latestReleaseMarker) -and $storedVersion -and $latestVersion -and ($storedVersion -ieq $latestVersion)) {
+      Write-Verbose "Installed marker came from a different source but matches latest version '$latestVersion'; skipping update download"
+      Write-UpdateEvent "Installed marker came from a different source but matches latest version '$latestVersion'; skipping update download"
+    } else {
+      Write-Verbose "Latest release already downloaded and -Reinstall was not specified; skipping update download"
+      Write-UpdateEvent "Latest release already downloaded and -Reinstall was not specified; skipping update download"
+    }
     return
   }
 
-  if ($Reinstall -and $storedReleaseMarker -and ($storedReleaseMarker -eq $latestReleaseMarker)) {
+  if ($Reinstall -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $latestReleaseMarker)) {
     Write-Verbose "-Reinstall was specified; re-downloading current latest release"
   }
 } elseif ($manualUpdateMarker) {
@@ -873,9 +935,16 @@ if ($latestReleaseMarker) {
     Write-Verbose "No stored installed release marker is available yet"
   }
 
-  if ((-not $Reinstall) -and $storedReleaseMarker -and ($storedReleaseMarker -eq $manualUpdateMarker)) {
-    Write-Verbose "Provided zip marker already installed and -Reinstall was not specified; skipping update"
-    Write-UpdateEvent "Provided zip marker already installed and -Reinstall was not specified; skipping update"
+  if ((-not $Reinstall) -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $manualUpdateMarker)) {
+    $storedVersion = Get-GetComputerHealthVersionFromMarker -Marker $storedReleaseMarker
+    $manualVersion = Get-GetComputerHealthVersionFromMarker -Marker $manualUpdateMarker
+    if (($storedReleaseMarker -ne $manualUpdateMarker) -and $storedVersion -and $manualVersion -and ($storedVersion -ieq $manualVersion)) {
+      Write-Verbose "Provided zip matches already installed version '$manualVersion' even though the source marker differs; skipping update"
+      Write-UpdateEvent "Provided zip matches already installed version '$manualVersion' even though the source marker differs; skipping update"
+    } else {
+      Write-Verbose "Provided zip marker already installed and -Reinstall was not specified; skipping update"
+      Write-UpdateEvent "Provided zip marker already installed and -Reinstall was not specified; skipping update"
+    }
     return
   }
 } else {
