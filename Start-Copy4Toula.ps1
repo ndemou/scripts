@@ -507,11 +507,29 @@ Requires this script to have been dot-sourced so transcript support is active.
     }
 }
 
+function Clean-OldTranscripts {
+    $oldFiles = Get-ChildItem -Path $env:TEMP -Filter "TTFtrans-*.txt*" -ErrorAction SilentlyContinue
+    $cleanedCount = 0
+    foreach ($file in $oldFiles) {
+        if ($file.Name -match 'TTFtrans-(\d+)(?:\.full)?\.txt') {
+            $filePid = $matches[1]
+            if (-not (Get-Process -Id $filePid -ErrorAction SilentlyContinue)) {
+                Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
+                $cleanedCount++
+            }
+        }
+    }
+    if ($cleanedCount -gt 0) {
+        Write-Host "(Cleaned up $cleanedCount orphaned transcript files from previous sessions.)" -ForegroundColor DarkGray
+    }
+}
+
 $transcriptPath = Get-SctTranscriptPath
 $fullPath = Get-SctFullTranscriptPath
 $isDotSourced = $MyInvocation.InvocationName -eq '.' -or $MyInvocation.InvocationName -eq 'source'
 
 if ($isDotSourced) {
+    Clean-OldTranscripts
     Set-Alias -Name q -Value Invoke-CommandFromClipboard -Scope Global
     Start-SctTranscriptIfNeeded
 
@@ -538,31 +556,8 @@ Will copy at most $($global:SctMaxLinesToCopy) lines of output.
 *: Some rare legacy tools may bypass the transcript.
 "@
 } else {
-    $oldFiles = Get-ChildItem -Path $env:TEMP -Filter "TTFtrans-*.txt*" -ErrorAction SilentlyContinue
-    $cleanedCount = 0
-
-    foreach ($file in $oldFiles) {
-        if ($file.Name -match 'TTFtrans-(\d+)(?:\.full)?\.txt') {
-            $filePid = $matches[1]
-            if (-not (Get-Process -Id $filePid -ErrorAction SilentlyContinue)) {
-                Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
-                $cleanedCount++
-            }
-        }
-    }
-
-    $scriptPath = if ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { ".\Toula-ClipboardRunner.ps1" }
-
+    $scriptPath = if ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { ".\Start-Copy4Toula.ps1" }
     Write-Host "To use this tool, dot-source the script:" -ForegroundColor Yellow
     Write-Host ""
     Write-Host ". $scriptPath" -ForegroundColor White -BackgroundColor DarkBlue
-    Write-Host ""
-    Write-Host "Then use:" -ForegroundColor Yellow
-    Write-Host "q" -ForegroundColor White -BackgroundColor DarkBlue
-    Write-Host ""
-    Write-Host "That will validate and execute PowerShell code from the clipboard, then copy its output to the clipboard."
-
-    if ($cleanedCount -gt 0) {
-        Write-Host "(Cleaned up $cleanedCount orphaned transcript files from previous sessions.)" -ForegroundColor DarkGray
-    }
 }
