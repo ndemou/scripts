@@ -12,6 +12,7 @@ TITLE = "Nick's Scripts"
 REPO_URL = "https://github.com/ndemou/scripts"
 DOWNLOAD_BASE_URL = "https://ndemou.github.io/scripts"
 SCRIPT_EXTENSIONS = {".ps1", ".sh"}
+EXCLUDED_DIR_NAMES = {"tests", "release", "__pycache__", ".git"}
 HELP_DIRECTIVE_RE = re.compile(r"^\s*\.(?P<name>[A-Z][A-Z0-9_-]*)\b", re.IGNORECASE)
 FUNCTION_HEADER_RE = re.compile(
     r"^\s*(function|filter)\b|^\s*\[[A-Za-z][^\]]*\]\s*$|^\s*param\s*\(|^\s*{\s*$",
@@ -417,9 +418,16 @@ def build_html(docs: list[ScriptDoc]) -> str:
 """
 
 
+def is_publishable_script(path: Path) -> bool:
+    if path.suffix.lower() not in SCRIPT_EXTENSIONS:
+        return False
+    relative_parts = path.relative_to(ROOT).parts[:-1]
+    return not any(part in EXCLUDED_DIR_NAMES for part in relative_parts)
+
+
 def main() -> None:
     docs = sorted(
-        (read_script_doc(path) for path in ROOT.rglob("*") if path.suffix.lower() in SCRIPT_EXTENSIONS),
+        (read_script_doc(path) for path in ROOT.rglob("*") if is_publishable_script(path)),
         key=lambda doc: doc.path.relative_to(ROOT).as_posix().lower(),
     )
     (ROOT / "index.html").write_text(build_html(docs), encoding="utf-8")

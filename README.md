@@ -1,28 +1,25 @@
 # scripts
 
-
-
 A collection of scripts I use often.
-
-
 
 See https://ndemou.github.io/scripts/
 
+## Publishing a new release
 
+This repository does not use a typical GitHub Release flow for publishing.
+To publish a new release of the static script index, run:
 
-\## Note to self
-
-
-
-Remember to run the following when I change/add/remove a script or I add/remove a function or I change the interface of a function:
-
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\release\Publish-NewRelease.ps1
 ```
 
-python .\\build\_index.py
+That script:
 
-```
+- runs all PowerShell test scripts under `.\tests\`
+- stops immediately if any test fails
+- runs `python .\build_index.py` only after all tests pass
 
-It updates https://ndemou.github.io/scripts/
+This updates `index.html`, which is what powers https://ndemou.github.io/scripts/
 
 
 
