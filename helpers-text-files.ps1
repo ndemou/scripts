@@ -231,6 +231,27 @@ data are skipped. Substitutions are evaluated sequentially.
     $replacementsToProcess[$Pattern] = $Replacement
   }
 
+  # Validate regex/replacement pairs before touching any files so invalid
+  # input fails as a terminating error instead of returning a soft result.
+  $compiledReplacements = [System.Collections.Generic.List[object]]::new()
+  foreach ($pat in $replacementsToProcess.Keys) {
+    $rep = $replacementsToProcess[$pat]
+    $effectivePattern = if($Literal){ [regex]::Escape($pat) } else { $pat }
+
+    try {
+      $rx = [regex]::new($effectivePattern)
+      $null = $rx.Replace('', $rep)
+      $compiledReplacements.Add([pscustomobject]@{
+        Pattern = $pat
+        Regex = $rx
+        Replacement = $rep
+      })
+    }
+    catch {
+      throw "Invalid regex or replace failed on pattern '$pat': $($_.Exception.Message)"
+    }
+  }
+
   $backupSuffix = _Etf_NormalizeBackupSuffix -Backup $Backup
 
   $targets = @()
@@ -277,26 +298,10 @@ data are skipped. Substitutions are evaluated sequentially.
     if($hasBom -and $text.Length -gt 0 -and $text[0] -eq [char]0xFEFF){ $text = $text.Substring(1) }
 
     $newText = $text
-    $replaceError = $null
 
     # Iterate sequentially through our normalized queue of replacements
-    foreach ($pat in $replacementsToProcess.Keys) {
-      $rep = $replacementsToProcess[$pat]
-      $effectivePattern = if($Literal){ [regex]::Escape($pat) } else { $pat }
-      
-      try { 
-        $rx = [regex]::new($effectivePattern)
-        $newText = $rx.Replace($newText, $rep)
-      }
-      catch {
-        $replaceError = "Invalid regex or replace failed on pattern '$pat': " + $_.Exception.Message
-        break # Break out of the replacement loop early on failure
-      }
-    }
-
-    if ($null -ne $replaceError) {
-      [pscustomobject]@{ File=$resolved; Changed=$false; EncodingStr=$encWritten; EncodingObj=$EncodingObj; Details=$replaceError }
-      continue
+    foreach ($replacementSpec in $compiledReplacements) {
+      $newText = $replacementSpec.Regex.Replace($newText, $replacementSpec.Replacement)
     }
 
     if($newText -ceq $text){
