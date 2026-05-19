@@ -1168,17 +1168,17 @@ error when building the hashtable.
 
                 $res1 = Edit-TextFile -File $target -ReplaceMap $batch1 `
 					-Literal -Backup $activeBackup -MaxFileSize $MaxFileSize `
-					-PreferISOEncodings $PreferISOEncodings
+					-PreferISOEncodings:$PreferISOEncodings
                 if ($res1.Changed) { $activeBackup = "" } 
 
                 $res2 = Edit-TextFile -File $target -ReplaceMap $batch2 `
 					-Literal -Backup $activeBackup -MaxFileSize $MaxFileSize `
-					-PreferISOEncodings $PreferISOEncodings
+					-PreferISOEncodings:$PreferISOEncodings
                 if ($res2.Changed) { $activeBackup = "" } 
 
                 $res3 = Edit-TextFile -File $target -ReplaceMap $batch3 `
 					-Literal -Backup $activeBackup -MaxFileSize $MaxFileSize `
-					-PreferISOEncodings $PreferISOEncodings
+					-PreferISOEncodings:$PreferISOEncodings
 
                 $anyChanged = ($res1.Changed -or $res2.Changed -or $res3.Changed)
                 $details = if ($anyChanged) { "Changes made across typography batches" } else { "Pattern(s) not found" }
