@@ -89,6 +89,83 @@
           <a class="script-link" href="helpers-files.ps1">helpers-files.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;helpers-files.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for helpers-files.ps1" aria-label="Copy download command for helpers-files.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
+          <p class="script-synopsis">A collection of helper functions for handling files</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <div class="function-panel">
+          <div class="function-entry">
+            <p class="function-name"><strong>Get-HardLinks</strong></p>
+            <p class="function-synopsis">Lists files in the current directory that have &gt;1 hardlink, and shows all link paths</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-HardLinks|Format-List</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>New-ZipFromFolder</strong></p>
+            <p class="function-synopsis">Creates a zip file from a folder, keeping the folder as the top-level entry and allowing for exclusions.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Packages the source folder into a zip file whose top-level folder name<br>matches the source folder name. Allows for recursive exclusions based<br>on file name, folder name, or relative path.</p>
+              <p class="script-details-text">Creates a sibling staging folder next to the source folder and removes<br>it before returning. On NTFS volumes, included files are staged as<br>hardlinks unless DontUseHardLinks is set. Hardlinking is super-fast.</p>
+              <p class="script-details-text">.PARAMETER Exclude<br>Wildcard patterns used to skip files or folders anywhere under the<br>source folder. A pattern can match an item name or a relative path.</p>
+              <p class="script-details-text">.PARAMETER NoCompression<br>When set, writes the archive without compression.</p>
+              <p class="script-details-text">.PARAMETER Fast<br>When set, writes the archive with the fastest compression level.</p>
+              <p class="script-details-text">.PARAMETER DontUseHardLinks<br>When set, stages included files by copying them; otherwise the function<br>uses hardlinks when the source volume supports them.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>New-ZipFromFolder .\App .\App.zip `<br>-Exclude &#x27;*.bak&#x27;,&#x27;*.tmp&#x27;,&#x27;.git&#x27;</p>
+              <p class="script-details-text">Creates the zip while skipping matching files and folders under App.</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Delete-OldFiles</strong></p>
+            <p class="function-synopsis">Deletes old files under a directory tree, with WhatIf support.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Attempts to remove files under Root whose LastWriteTime is older than Cutoff.<br>Use this when you need recursive age-based cleanup with WhatIf support and<br>optional cleanup of child folders left empty by the cleanup.</p>
+              <p class="script-details-text">Skips reparse points (junctions/symlinks/mount points) so cleanup stays inside<br>the intended tree.</p>
+              <p class="script-details-text">By default, non-root child folders will be removed when they have no<br>remaining files or child folders after file cleanup. Root is not<br>removed. When LeaveEmptyFolders is set, folders are not removed.</p>
+              <p class="script-details-text">Deletion failures for individual files or folders are reported as warnings.<br>Other matching files and folders may still be processed. Permission limits,<br>locked files, and enumeration errors can leave matching files or folders in<br>place.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>None. Does not write objects to the pipeline.</p>
+              <p class="script-details-text">Writes scan and deletion status to the host.<br>Writes warnings for failed file or folder removals.</p>
+              <p class="script-details-text">.PARAMETER Root<br>Directory tree to clean. The path must identify an existing directory.</p>
+              <p class="script-details-text">.PARAMETER Cutoff<br>Files with LastWriteTime earlier than this value are candidates for removal.</p>
+              <p class="script-details-text">.PARAMETER LeaveEmptyFolders<br>When set, only matching files are removed; otherwise, non-root child folders<br>left empty by the cleanup scope may also be removed.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Delete-OldFiles -Root C:\Temp -Cutoff (Get-Date).AddMonths(-6) -WhatIf</p>
+              <p class="script-details-text">Shows the files and folders that would be removed under C:\Temp.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Delete-OldFiles -Root C:\Temp -Cutoff (Get-Date).AddMonths(-6) `<br>-LeaveEmptyFolders</p>
+              <p class="script-details-text">Removes old files under C:\Temp but does not remove empty folders.</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Get-DiskInfo</strong></p>
+            <p class="function-synopsis">.SYNOPSIS Gets Win32_LogicalDisk information for one disk. .DESCRIPTION Popular properties: FreeSpace, Size, VolumeName, DriveType .PARAMETER Disk Disk device ID, for example C:.</p>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Test-NonReparseDirectory</strong></p>
+            <p class="function-synopsis">.SYNOPSIS Returns true only for real directories, not junctions/symlinks. .PARAMETER LiteralPath Directory path to test without wildcard expansion.</p>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Clear-OldTempFiles</strong></p>
+            <p class="function-synopsis">Deletes old files from common Windows temporary file locations.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Attempts to remove old files from the current process TEMP and TMP<br>locations, the Windows temp location, and detected user temp folders under<br>C:\Users.</p>
+              <p class="script-details-text">Skips reparse points (junctions/symlinks/mount points) so cleanup stays inside<br>the intended trees.</p>
+              <p class="script-details-text">Use this as a safer temp cleanup entry point when you need age-based cleanup<br>across the usual system and user temp locations, WhatIf support, and optional<br>cleanup of child folders left empty by the cleanup.</p>
+              <p class="script-details-text">The cutoff is calculated from the current time and MonthsOld. By default,<br>non-root child folders inside each temp root may also be removed when they<br>have no remaining detected files or child folders after file cleanup. Temp<br>root folders themselves are not removed.</p>
+              <p class="script-details-text">Deletion failures for individual files or folders are reported as warnings.<br>Other matching files and folders may still be processed. Permission limits,<br>locked files, missing profiles, and enumeration errors can leave matching<br>files or folders in place. Run elevated to cover system and other-user temp<br>locations where required.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>None. Does not write objects to the pipeline.</p>
+              <p class="script-details-text">Writes cutoff, scan, and deletion status to the host.<br>Writes warnings for failed file or folder removals.</p>
+              <p class="script-details-text">.PARAMETER MonthsOld<br>Age threshold in months. Files older than the calculated cutoff are<br>candidates for removal.</p>
+              <p class="script-details-text">.PARAMETER LeaveEmptyFolders<br>When set, only matching files are removed; otherwise, non-root child folders<br>left empty by the cleanup will also be removed.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Clear-OldTempFiles -WhatIf</p>
+              <p class="script-details-text">Shows the old temp files and folders that would be removed.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Clear-OldTempFiles -MonthsOld 3 -LeaveEmptyFolders</p>
+              <p class="script-details-text">Removes temp files older than the calculated cutoff and keeps folders.</p>
+            </details>
+          </div>
+          </div>
+        </details>
       </li>
       <li class="script-item">
         <div class="script-header">

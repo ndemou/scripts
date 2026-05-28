@@ -13,6 +13,9 @@ REPO_URL = "https://github.com/ndemou/scripts"
 DOWNLOAD_BASE_URL = "https://ndemou.github.io/scripts"
 SCRIPT_EXTENSIONS = {".ps1", ".sh"}
 EXCLUDED_DIR_NAMES = {"tests", "release", "__pycache__", ".git"}
+FILE_COLOR = "\033[96m"
+FUNCTION_COLOR = "\033[92m"
+RESET_COLOR = "\033[0m"
 HELP_DIRECTIVE_RE = re.compile(r"^\s*\.(?P<name>[A-Z][A-Z0-9_-]*)\b", re.IGNORECASE)
 FUNCTION_HEADER_RE = re.compile(
     r"^\s*(function|filter)\b|^\s*\[[A-Za-z][^\]]*\]\s*$|^\s*param\s*\(|^\s*{\s*$",
@@ -75,12 +78,16 @@ def strip_block_comment_markers(lines: list[str]) -> list[str]:
     return normalize_comment_lines(lines)
 
 
+def strip_utf8_bom(text: str) -> str:
+    return text.removeprefix("\ufeff")
+
+
 def extract_comment_block(text: str, extension: str) -> list[str]:
     lines = text.splitlines()
     index = 0
 
     while index < len(lines):
-        stripped = lines[index].strip()
+        stripped = strip_utf8_bom(lines[index].strip())
         if not stripped:
             index += 1
             continue
@@ -95,7 +102,7 @@ def extract_comment_block(text: str, extension: str) -> list[str]:
     if index >= len(lines):
         return []
 
-    stripped = lines[index].strip()
+    stripped = strip_utf8_bom(lines[index].strip())
 
     if stripped.startswith("<#"):
         block: list[str] = []
@@ -425,11 +432,23 @@ def is_publishable_script(path: Path) -> bool:
     return not any(part in EXCLUDED_DIR_NAMES for part in relative_parts)
 
 
+def print_documented_item(doc: ScriptDoc) -> None:
+    relative_path = doc.path.relative_to(ROOT).as_posix()
+    print(f"{FILE_COLOR}FILE {relative_path}{RESET_COLOR}")
+    if doc.function_docs:
+        for function_doc in doc.function_docs:
+            print(f"{FUNCTION_COLOR}  FUNC {function_doc.name}{RESET_COLOR}")
+
+
 def main() -> None:
-    docs = sorted(
-        (read_script_doc(path) for path in ROOT.rglob("*") if is_publishable_script(path)),
-        key=lambda doc: doc.path.relative_to(ROOT).as_posix().lower(),
-    )
+    docs: list[ScriptDoc] = []
+    for path in ROOT.rglob("*"):
+        if not is_publishable_script(path):
+            continue
+        doc = read_script_doc(path)
+        docs.append(doc)
+        print_documented_item(doc)
+    docs.sort(key=lambda doc: doc.path.relative_to(ROOT).as_posix().lower())
     (ROOT / "index.html").write_text(build_html(docs), encoding="utf-8")
 
 
