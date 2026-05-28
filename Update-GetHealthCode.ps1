@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Ensures all health-check scripts and PS Modules are installed & up-to-date.
 
@@ -9,13 +9,52 @@ it re-invokes the updated copy. When replacing a file, backup copies
 are created in the backups directory.
 Will set PSGallery as Trusted.
 
-.OUTPUTS
-None.
+The updater also tracks a small "release marker" for the currently
+installed code and for the target update source. A release marker is a
+stable identifier for a specific release source, typically derived from
+GitHub release metadata or from a manually supplied zip file name plus
+its content hash. These markers are cached locally and let the updater
+decide whether the requested update is already installed, whether it can
+skip re-downloading or reapplying files, and when `-Reinstall` should
+force the update to run again.
+
+.PARAMETER Reinstall
+Forces reinstall even when installed release matches target release.
+
+.PARAMETER UpdateFromZip
+Overides the default which is to fetch the latest GitHub release.
+
+.PARAMETER Version
+Explicit semantic version to associate with `-UpdateFromZip` when the zip
+file name does not already embed a version token such as `v4.4.3`.
+Use `X.Y.Z` or `vX.Y.Z`. 
+
+.PARAMETER ForceRefreshReleaseMetadata
+Overides the default which is to cache latest-release metadata locally
+for a few minutes (to avoid querying GitHub on every run).
+
+.PARAMETER SelfRerunCount
+Internal use only. Tracks the one-time self-rerun pass count.
+
+.PARAMETER PersistReleaseMarker
+Internal use only. Carries the resolved release marker across self-rerun.
+
+.EXAMPLE
+.\Update-GetHealthCode.ps1
+
+Checks the locally cached latest-release metadata, refreshes it from
+GitHub when needed, and installs the latest published release when it is
+newer than the currently installed release marker.
+
+.EXAMPLE
+.\Update-GetHealthCode.ps1 -UpdateFromZip C:\Downloads\GetComputerHealth-v4.4.3.zip
+
 #>
 [CmdletBinding()]
 param(
   [switch]$Reinstall,
   [string]$UpdateFromZip,
+  [string]$Version,
   [switch]$ForceRefreshReleaseMetadata,
   [Parameter(DontShow=$true)][int]$SelfRerunCount = 0,
   [Parameter(DontShow=$true)][string]$PersistReleaseMarker
@@ -35,14 +74,19 @@ $DEST_DIR = $SCRIPT_BIN_DIR
 $BAK_DIR  = Join-Path $ROOT_DIR 'temp'
 $CFG_DIR  = Join-Path $ROOT_DIR 'config'
 $LOG_DIR  = Join-Path $ROOT_DIR 'log'
-$script:UPDATE_LOG_PATH = Join-Path $LOG_DIR 'Update-GetHealthCode.log'
+$script:UpdateTranscriptStarted = $false
+$script:UpdateTranscriptTempPath = $null
+$script:UpdateTranscriptFinalPath = $null
+$script:UpdateTranscriptTimestamp = (Get-Date)
 $REPO_URL = 'https://github.com/ndemou/GetComputerHealth'
+$SHOW_AS_POSTPONED_WINDOW_DAYS = 150
 $REPO_REF = 'main'
+$GCH_CONFIG_PATH = Join-Path $CFG_DIR 'gch.psd1'
 $LATEST_RELEASE_METADATA_CACHE_PATH = Join-Path $CFG_DIR 'Get-ComputerHealth-latest-release-meta.json'
 $RELEASE_METADATA_CACHE_TTL_MINUTES = 60
 $ZIP_CACHE_PATTERN = 'GetComputerHealth-release-*.zip'
 $MANUAL_ZIP_CACHE_PATTERN = 'GetComputerHealth-MANUAL-UPDATE-*.zip'
-$repoSlug = (($REPO_URL -replace '^https?://github\.com/','') -replace '\.git$','').Trim('/')
+$repoSlug = $null
 #
 #  END OF CONFIG
 #
@@ -58,13 +102,724 @@ function Write-UpdateEvent {
 
   if ([string]::IsNullOrWhiteSpace($Message)) { return }
   Write-Host $Message
+}
+
+function Get-GchDefaultConfigText {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$RepoUrl,
+    [Parameter(Mandatory)][int]$ShowAsPostponedWindowDays
+  )
+
+  @"
+@{
+    AutomaticUpdates = `$true
+    RepoUrl = '$RepoUrl'
+    ShowAsPostponedWindowDays = $ShowAsPostponedWindowDays
+}
+"@
+}
+
+function Ensure-GchConfigFile {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [Parameter(Mandatory)][string]$RepoUrl,
+    [Parameter(Mandatory)][int]$ShowAsPostponedWindowDays
+  )
+
+  if (Test-Path -LiteralPath $Path -PathType Leaf) {
+    return
+  }
+
+  $parentDir = Split-Path -Parent $Path
+  if (-not [string]::IsNullOrWhiteSpace($parentDir) -and (-not (Test-Path -LiteralPath $parentDir -PathType Container))) {
+    $null = New-Item -ItemType Directory -Path $parentDir -Force
+  }
+
+  $text = Get-GchDefaultConfigText -RepoUrl $RepoUrl -ShowAsPostponedWindowDays $ShowAsPostponedWindowDays
+  Set-Content -LiteralPath $Path -Value $text -Encoding UTF8
+}
+
+function Read-GchConfigFile {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    return @{}
+  }
+
   try {
+    $config = Import-PowerShellDataFile -LiteralPath $Path -ErrorAction Stop
+  } catch {
+    throw "Failed reading configuration file '$Path': $($_.Exception.Message)"
+  }
+
+  if ($null -eq $config) {
+    return @{}
+  }
+
+  return $config
+}
+
+function Test-GchConfigKey {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]$Config,
+    [Parameter(Mandatory)][string]$Key
+  )
+
+  if ($Config -is [hashtable]) {
+    return $Config.ContainsKey($Key)
+  }
+
+  return ($Config.PSObject.Properties[$Key] -ne $null)
+}
+
+function Get-GchConfigValue {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]$Config,
+    [Parameter(Mandatory)][string]$Key
+  )
+
+  if ($Config -is [hashtable]) {
+    return $Config[$Key]
+  }
+
+  return $Config.$Key
+}
+
+function Test-GchFalsyValue {
+  [CmdletBinding()]
+  param([AllowNull()]$Value)
+
+  if ($null -eq $Value) { return $true }
+  if ($Value -is [bool]) { return (-not $Value) }
+  if ($Value -is [int]) { return ($Value -eq 0) }
+  if ($Value -is [string]) {
+    $text = $Value.Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { return $true }
+    return ($text -in @('0', 'false', 'no', 'off'))
+  }
+
+  return (-not [bool]$Value)
+}
+
+function Resolve-GchConfiguredRepoUrl {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$RepoUrl)
+
+  $value = $RepoUrl.Trim()
+  $uri = $null
+  if (([string]::IsNullOrWhiteSpace($value)) -or (-not [System.Uri]::TryCreate($value, [System.UriKind]::Absolute, [ref]$uri))) {
+    throw "Invalid RepoUrl value in gch.psd1: '$RepoUrl'. Use a GitHub repository URL such as https://github.com/owner/repo."
+  }
+
+  if (($uri.Scheme -notin @('http', 'https')) -or ($uri.Host -ine 'github.com')) {
+    throw "Invalid RepoUrl value in gch.psd1: '$RepoUrl'. Use a GitHub repository URL such as https://github.com/owner/repo."
+  }
+
+  $parts = @($uri.AbsolutePath.Trim('/') -split '/')
+  if (($parts.Count -lt 2) -or [string]::IsNullOrWhiteSpace($parts[0]) -or [string]::IsNullOrWhiteSpace($parts[1])) {
+    throw "Invalid RepoUrl value in gch.psd1: '$RepoUrl'. Use a GitHub repository URL such as https://github.com/owner/repo."
+  }
+
+  $normalizedPath = ('{0}/{1}' -f $parts[0], (($parts[1] -replace '\.git$', '')))
+  return ('{0}://github.com/{1}' -f $uri.Scheme.ToLowerInvariant(), $normalizedPath)
+}
+
+function Resolve-GchConfiguredNonNegativeInteger {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]$Value,
+    [Parameter(Mandatory)][string]$Key
+  )
+
+  $text = ([string]$Value).Trim()
+  $number = 0
+  if (([string]::IsNullOrWhiteSpace($text)) -or (-not [int]::TryParse($text, [ref]$number)) -or ($number -lt 0)) {
+    throw "Invalid $Key value in gch.psd1: '$Value'. Use an integer greater than or equal to 0."
+  }
+
+  return $number
+}
+
+function Get-DiskFormatStateText {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][int]$CurrentDiskFormat,
+    [Parameter(Mandatory)][int]$LatestCompatibleCodeVersion
+  )
+
+  @"
+@{
+  # This is the major version of the last code release that changed the On-Disk Format
+  CurrentDiskFormat = $CurrentDiskFormat
+  # This is the major version of the latest code that works fine with the above On-Disk Format
+  LatestCompatibleCodeVersion = $LatestCompatibleCodeVersion
+}
+"@
+}
+
+function Read-DiskFormatState {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    return @{
+      CurrentDiskFormat = 4
+      LatestCompatibleCodeVersion = 4
+    }
+  }
+
+  try {
+    $state = Import-PowerShellDataFile -LiteralPath $Path -ErrorAction Stop
+  } catch {
+    throw "Failed reading disk format state file '$Path': $($_.Exception.Message)"
+  }
+
+  if ($null -eq $state) {
+    throw "Disk format state file '$Path' did not contain a PowerShell data hash."
+  }
+
+  $current = Resolve-GchConfiguredNonNegativeInteger -Value $state.CurrentDiskFormat -Key 'CurrentDiskFormat'
+  $latestCompatible = Resolve-GchConfiguredNonNegativeInteger -Value $state.LatestCompatibleCodeVersion -Key 'LatestCompatibleCodeVersion'
+
+  return @{
+    CurrentDiskFormat = $current
+    LatestCompatibleCodeVersion = $latestCompatible
+  }
+}
+
+function Write-DiskFormatState {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [Parameter(Mandatory)][int]$CurrentDiskFormat,
+    [Parameter(Mandatory)][int]$LatestCompatibleCodeVersion
+  )
+
+  $parentDir = Split-Path -Parent $Path
+  if (-not [string]::IsNullOrWhiteSpace($parentDir) -and (-not (Test-Path -LiteralPath $parentDir -PathType Container))) {
+    $null = New-Item -ItemType Directory -Path $parentDir -Force
+  }
+
+  $text = Get-DiskFormatStateText -CurrentDiskFormat $CurrentDiskFormat -LatestCompatibleCodeVersion $LatestCompatibleCodeVersion
+  Set-Content -LiteralPath $Path -Value $text -Encoding UTF8
+}
+
+function Get-GetComputerHealthMajorVersion {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Version)
+
+  $match = [regex]::Match($Version.Trim(), '^(?:v)?(?<Major>\d+)\.\d+\.\d+$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if (-not $match.Success) {
+    throw "Invalid GetComputerHealth version '$Version'. Use semantic version format X.Y.Z."
+  }
+
+  return [int]$match.Groups['Major'].Value
+}
+
+function ConvertTo-DiskFormatManifestList {
+  [CmdletBinding()]
+  param([AllowNull()][string]$Value)
+
+  $items = @()
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $items
+  }
+
+  foreach ($item in ($Value -split ',')) {
+    $trimmed = $item.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+      $items += $trimmed
+    }
+  }
+
+  return $items
+}
+
+function Read-DiskFormatMigrationManifest {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$ScriptPath)
+
+  $text = Get-Content -LiteralPath $ScriptPath -Raw -ErrorAction Stop
+  $manifestMatch = [regex]::Match($text, '(?is)\.MANIFEST\s*(?<Body>.*?)(?:\r?\n\s*\.[A-Z][A-Z0-9_-]*|\r?\n\s*#>)')
+  if (-not $manifestMatch.Success) {
+    throw "Migration script '$ScriptPath' is missing a .MANIFEST block."
+  }
+
+  $modifiedTopFolders = @()
+  $newTopFolders = @()
+  $lines = $manifestMatch.Groups['Body'].Value -split "`r?`n"
+  foreach ($line in $lines) {
+    $cleanLine = ([string]$line).Trim()
+    if ([string]::IsNullOrWhiteSpace($cleanLine) -or $cleanLine.StartsWith('#')) {
+      continue
+    }
+
+    $keyValueMatch = [regex]::Match($cleanLine, '^(?<Key>[A-Za-z][A-Za-z0-9_]*)\s*=\s*(?<Value>.*)$')
+    if (-not $keyValueMatch.Success) {
+      continue
+    }
+
+    $key = $keyValueMatch.Groups['Key'].Value
+    $value = $keyValueMatch.Groups['Value'].Value
+    if ($key -ieq 'ModifiedTopFolders') {
+      $modifiedTopFolders = ConvertTo-DiskFormatManifestList -Value $value
+    } elseif ($key -ieq 'NewTopFolders') {
+      $newTopFolders = ConvertTo-DiskFormatManifestList -Value $value
+    }
+  }
+
+  return @{
+    ModifiedTopFolders = @($modifiedTopFolders)
+    NewTopFolders = @($newTopFolders)
+  }
+}
+
+function Get-DiskFormatMigrationScripts {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$MigrationDir,
+    [Parameter(Mandatory)][int]$SourceDiskFormat,
+    [Parameter(Mandatory)][int]$TargetCodeVersion
+  )
+
+  if (-not (Test-Path -LiteralPath $MigrationDir -PathType Container)) {
+    return @()
+  }
+
+  $results = @()
+  $files = @(Get-ChildItem -LiteralPath $MigrationDir -File -Filter 'migrate-to-version-*.ps1' -ErrorAction Stop)
+  foreach ($file in $files) {
+    $match = [regex]::Match($file.Name, '^migrate-to-version-(?<Version>\d+)\.ps1$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $match.Success) {
+      continue
+    }
+
+    $migrationVersion = [int]$match.Groups['Version'].Value
+    if (($migrationVersion -gt $SourceDiskFormat) -and ($migrationVersion -le $TargetCodeVersion)) {
+      $results += [pscustomobject]@{
+        Version = $migrationVersion
+        Path = $file.FullName
+      }
+    }
+  }
+
+  return @($results | Sort-Object -Property Version)
+}
+
+function Remove-OldDiskFormatMigrationBackups {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$RootDir,
+    [int]$RetentionDays = 7
+  )
+
+  try {
+    $cutoff = (Get-Date).AddDays(-1 * $RetentionDays)
+    $oldBackups = @()
+    $backupCandidates = @(Get-ChildItem -LiteralPath $RootDir -Directory -Recurse -ErrorAction Stop)
+    foreach ($candidate in $backupCandidates) {
+      if (($candidate.Name -match '^\d+-to-\d+\.bak$') -and ($candidate.LastWriteTime -lt $cutoff)) {
+        $oldBackups += $candidate
+      }
+    }
+
+    foreach ($backup in $oldBackups) {
+      Write-Verbose "Deleting old disk format migration backup '$($backup.FullName)'"
+      Remove-Item -LiteralPath $backup.FullName -Recurse -Force -ErrorAction Stop
+    }
+  } catch {
+    Write-Warning ("Failed pruning old disk format migration backups in {0}: {1}" -f $RootDir, $_.Exception.Message)
+  }
+}
+
+function Backup-DiskFormatMigrationFolders {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$RootDir,
+    [Parameter(Mandatory)][string[]]$TopFolders,
+    [Parameter(Mandatory)][int]$FromVersion,
+    [Parameter(Mandatory)][int]$ToVersion
+  )
+
+  $backups = @()
+  foreach ($topFolder in $TopFolders) {
+    if ([string]::IsNullOrWhiteSpace($topFolder)) {
+      continue
+    }
+
+    if ($topFolder.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+      throw "Invalid top folder name in migration manifest: '$topFolder'"
+    }
+
+    $sourcePath = Join-Path $RootDir $topFolder
+    $backupPath = Join-Path $sourcePath ('{0}-to-{1}.bak' -f $FromVersion, $ToVersion)
+    $backupLeafName = Split-Path -Leaf $backupPath
+
+    if (Test-Path -LiteralPath $backupPath) {
+      Write-Verbose "Deleting existing disk format migration backup '$backupPath'"
+      Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop
+    }
+
+    if (Test-Path -LiteralPath $sourcePath -PathType Container) {
+      Write-Verbose "Creating disk format migration backup '$backupPath' from '$sourcePath'"
+      New-Item -ItemType Directory -Path $backupPath -Force -ErrorAction Stop | Out-Null
+      $sourceChildren = @(Get-ChildItem -LiteralPath $sourcePath -Force -ErrorAction Stop)
+      foreach ($child in $sourceChildren) {
+        if ($child.Name -ieq $backupLeafName) {
+          continue
+        }
+
+        Copy-Item -LiteralPath $child.FullName -Destination $backupPath -Recurse -Force -ErrorAction Stop
+      }
+
+      Write-UpdateEvent "Created disk format migration backup '$backupPath'"
+      $backups += [pscustomobject]@{
+        TopFolder = $topFolder
+        SourcePath = $sourcePath
+        BackupPath = $backupPath
+        HadSource = $true
+      }
+    } else {
+      Write-Verbose "Top folder '$sourcePath' does not exist; no migration backup needed"
+      $backups += [pscustomobject]@{
+        TopFolder = $topFolder
+        SourcePath = $sourcePath
+        BackupPath = $backupPath
+        HadSource = $false
+      }
+    }
+  }
+
+  return @($backups)
+}
+
+function Restore-DiskFormatMigrationFolders {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)]$Backups)
+
+  foreach ($backup in @($Backups)) {
+    if ($backup.HadSource) {
+      if (-not (Test-Path -LiteralPath $backup.BackupPath -PathType Container)) {
+        throw "Cannot restore disk format migration backup because '$($backup.BackupPath)' no longer exists."
+      }
+
+      if (-not (Test-Path -LiteralPath $backup.SourcePath -PathType Container)) {
+        New-Item -ItemType Directory -Path $backup.SourcePath -Force -ErrorAction Stop | Out-Null
+      }
+
+      $backupLeafName = Split-Path -Leaf $backup.BackupPath
+      $sourceChildren = @(Get-ChildItem -LiteralPath $backup.SourcePath -Force -ErrorAction Stop)
+      foreach ($child in $sourceChildren) {
+        if ($child.Name -ieq $backupLeafName) {
+          continue
+        }
+
+        Write-Verbose "Removing modified path '$($child.FullName)' before restore"
+        Remove-Item -LiteralPath $child.FullName -Recurse -Force -ErrorAction Stop
+      }
+
+      Write-Verbose "Restoring disk format migration backup '$($backup.BackupPath)' to '$($backup.SourcePath)'"
+      $backupChildren = @(Get-ChildItem -LiteralPath $backup.BackupPath -Force -ErrorAction Stop)
+      foreach ($child in $backupChildren) {
+        Copy-Item -LiteralPath $child.FullName -Destination $backup.SourcePath -Recurse -Force -ErrorAction Stop
+      }
+    } elseif (Test-Path -LiteralPath $backup.SourcePath) {
+      Write-Verbose "Deleting folder '$($backup.SourcePath)' because it did not exist before the failed migration"
+      Remove-Item -LiteralPath $backup.SourcePath -Recurse -Force -ErrorAction Stop
+    }
+  }
+}
+
+function Remove-DiskFormatMigrationNewFolders {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$RootDir,
+    [Parameter(Mandatory)][string[]]$TopFolders,
+    [string[]]$ExistingTopFolders = @()
+  )
+
+  $existing = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($topFolder in $ExistingTopFolders) {
+    if (-not [string]::IsNullOrWhiteSpace($topFolder)) {
+      $null = $existing.Add($topFolder)
+    }
+  }
+
+  foreach ($topFolder in $TopFolders) {
+    if ([string]::IsNullOrWhiteSpace($topFolder)) {
+      continue
+    }
+
+    if ($existing.Contains($topFolder)) {
+      Write-Verbose "Leaving existing folder '$topFolder' in place after failed migration"
+      continue
+    }
+
+    $path = Join-Path $RootDir $topFolder
+    if (Test-Path -LiteralPath $path) {
+      Write-Verbose "Deleting new folder introduced by failed migration: '$path'"
+      Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+    }
+  }
+}
+
+function Invoke-DiskFormatMigrationScript {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$ScriptPath,
+    [Parameter(Mandatory)][string]$WorkingDirectory
+  )
+
+  $powerShellExe = Join-Path $PSHOME 'powershell.exe'
+  if (-not (Test-Path -LiteralPath $powerShellExe -PathType Leaf)) {
+    $powerShellExe = 'powershell.exe'
+  }
+
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $powerShellExe
+  $startInfo.Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f ($ScriptPath -replace '"', '\"'))
+  $startInfo.UseShellExecute = $false
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  $startInfo.CreateNoWindow = $true
+  $startInfo.WorkingDirectory = $WorkingDirectory
+
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $startInfo
+  $null = $process.Start()
+  $stdout = $process.StandardOutput.ReadToEnd()
+  $stderr = $process.StandardError.ReadToEnd()
+  $process.WaitForExit()
+
+  if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+    Write-Host $stdout.TrimEnd()
+  }
+  if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+    Write-Warning $stderr.TrimEnd()
+  }
+
+  $stdoutLines = @()
+  if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+    $stdoutLines = @($stdout -split "`r?`n")
+  }
+
+  $lastStdoutLine = ''
+  for ($i = $stdoutLines.Count - 1; $i -ge 0; $i--) {
+    $candidate = ([string]$stdoutLines[$i]).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+      $lastStdoutLine = $candidate
+      break
+    }
+  }
+
+  $updaterPath = $null
+  if ($lastStdoutLine -match '^PATH_TO_UPDATER=(?<Path>.+)$') {
+    $updaterPath = $matches['Path']
+  }
+
+  return [pscustomobject]@{
+    ExitCode = [int]$process.ExitCode
+    LastStdoutLine = $lastStdoutLine
+    UpdaterPath = $updaterPath
+  }
+}
+
+function Invoke-DiskFormatMigrations {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$RootDir,
+    [Parameter(Mandatory)][string]$ReleaseRoot,
+    [Parameter(Mandatory)][string]$TargetCodeVersion
+  )
+
+  $targetCodeMajor = Get-GetComputerHealthMajorVersion -Version $TargetCodeVersion
+  $dataDir = Join-Path $RootDir 'data'
+  $statePath = Join-Path $dataDir 'disk-format.psd1'
+  $state = Read-DiskFormatState -Path $statePath
+  $sourceDiskFormat = [int]$state.CurrentDiskFormat
+
+  Write-UpdateEvent "Detected source disk format: $sourceDiskFormat"
+  Write-UpdateEvent "Target code major version: $targetCodeMajor"
+  Write-Verbose "Detected source disk format: $sourceDiskFormat"
+  Write-Verbose "Target code major version: $targetCodeMajor"
+
+  if ($targetCodeMajor -lt $sourceDiskFormat) {
+    throw "Format downgrade is not supported. Source disk format is $sourceDiskFormat but target code major version is $targetCodeMajor."
+  }
+
+  $mutex = New-Object System.Threading.Mutex($false, 'Global\GetComputerHealth-DiskFormatMigration')
+  $hasMutex = $false
+  try {
+    try {
+      $hasMutex = $mutex.WaitOne([TimeSpan]::FromSeconds(60))
+    } catch [System.Threading.AbandonedMutexException] {
+      $hasMutex = $true
+      Write-Warning 'Recovered an abandoned disk format migration mutex.'
+    }
+
+    if (-not $hasMutex) {
+      throw 'Another GetComputerHealth disk format migration is already running.'
+    }
+
+    Remove-OldDiskFormatMigrationBackups -RootDir $RootDir -RetentionDays 7
+
+    $migrationDir = Join-Path $ReleaseRoot 'disk-format-migrations'
+    $migrations = @(Get-DiskFormatMigrationScripts -MigrationDir $migrationDir -SourceDiskFormat $sourceDiskFormat -TargetCodeVersion $targetCodeMajor)
+    $currentDiskFormat = $sourceDiskFormat
+    $lastUpdaterPath = $null
+
+    if ($migrations.Count -eq 0) {
+      Write-Verbose "No disk format migration scripts found for versions greater than $sourceDiskFormat and less than or equal to $targetCodeMajor"
+      Write-UpdateEvent "No disk format migration is needed."
+      if ([int]$state.LatestCompatibleCodeVersion -ne $targetCodeMajor) {
+        Write-DiskFormatState -Path $statePath -CurrentDiskFormat $currentDiskFormat -LatestCompatibleCodeVersion $targetCodeMajor
+        Write-UpdateEvent "Persisted disk format: CurrentDiskFormat=$currentDiskFormat LatestCompatibleCodeVersion=$targetCodeMajor"
+      }
+      return [pscustomobject]@{
+        CurrentDiskFormat = $currentDiskFormat
+        LatestCompatibleCodeVersion = $targetCodeMajor
+        UpdaterPath = $null
+        RanMigrations = $false
+      }
+    }
+
+    foreach ($migration in $migrations) {
+      $manifest = Read-DiskFormatMigrationManifest -ScriptPath $migration.Path
+      $modifiedTopFolders = @($manifest.ModifiedTopFolders)
+      $newTopFolders = @($manifest.NewTopFolders)
+
+      Write-UpdateEvent ("Running disk format migration {0} from '{1}'" -f $migration.Version, $migration.Path)
+      $backups = @()
+      $existingNewTopFolders = @()
+      foreach ($topFolder in $newTopFolders) {
+        if ([string]::IsNullOrWhiteSpace($topFolder)) {
+          continue
+        }
+
+        if (Test-Path -LiteralPath (Join-Path $RootDir $topFolder)) {
+          $existingNewTopFolders += $topFolder
+        }
+      }
+
+      try {
+        $backups = @(Backup-DiskFormatMigrationFolders -RootDir $RootDir -TopFolders $modifiedTopFolders -FromVersion $currentDiskFormat -ToVersion $migration.Version)
+        $result = Invoke-DiskFormatMigrationScript -ScriptPath $migration.Path -WorkingDirectory $RootDir
+
+        if ($result.ExitCode -eq 0) {
+          if ([string]::IsNullOrWhiteSpace($result.UpdaterPath)) {
+            throw "Migration '$($migration.Path)' succeeded but did not emit PATH_TO_UPDATER as the last stdout line."
+          }
+          $lastUpdaterPath = $result.UpdaterPath
+          $currentDiskFormat = [int]$migration.Version
+        } elseif (($result.ExitCode -eq 1) -and ($result.LastStdoutLine -eq 'No migration is needed')) {
+          Write-Verbose "Migration '$($migration.Path)' reported that no action was needed"
+          $currentDiskFormat = [int]$migration.Version
+        } else {
+          throw "Migration '$($migration.Path)' failed with exit code $($result.ExitCode)."
+        }
+      } catch {
+        Write-Warning ("Disk format migration {0} failed; attempting restore: {1}" -f $migration.Version, $_.Exception.Message)
+        Restore-DiskFormatMigrationFolders -Backups $backups
+        Remove-DiskFormatMigrationNewFolders -RootDir $RootDir -TopFolders $newTopFolders -ExistingTopFolders $existingNewTopFolders
+        throw
+      }
+    }
+
+    Write-DiskFormatState -Path $statePath -CurrentDiskFormat $currentDiskFormat -LatestCompatibleCodeVersion $targetCodeMajor
+    Write-UpdateEvent "Persisted disk format: CurrentDiskFormat=$currentDiskFormat LatestCompatibleCodeVersion=$targetCodeMajor"
+
+    return [pscustomobject]@{
+      CurrentDiskFormat = $currentDiskFormat
+      LatestCompatibleCodeVersion = $targetCodeMajor
+      UpdaterPath = $lastUpdaterPath
+      RanMigrations = $true
+    }
+  } finally {
+    if ($hasMutex) {
+      $mutex.ReleaseMutex()
+    }
+    $mutex.Dispose()
+  }
+}
+
+function Start-UpdateTranscript {
+<#
+.SYNOPSIS
+Starts transcript logging for the updater when possible.
+#>
+  [CmdletBinding()]
+  param()
+
+  try {
+    $tempRoot = $env:TEMP
+    if ([string]::IsNullOrWhiteSpace($tempRoot)) {
+      $tempRoot = [System.IO.Path]::GetTempPath()
+    }
+    $script:UpdateTranscriptTempPath = Join-Path $tempRoot ("Update-GetHealthCode-{0}.transcript.log" -f [guid]::NewGuid().ToString())
+
+    Start-Transcript -Path $script:UpdateTranscriptTempPath -Force -ErrorAction Stop | Out-Null
+    $script:UpdateTranscriptStarted = $true
+  } catch {
+    $script:UpdateTranscriptStarted = $false
+    $script:UpdateTranscriptTempPath = $null
+    Write-Warning ("Failed to start transcript log in temp storage: {0}" -f $_.Exception.Message)
+  }
+}
+
+function Stop-UpdateTranscript {
+<#
+.SYNOPSIS
+Stops transcript logging for the updater when it was started.
+#>
+  [CmdletBinding()]
+  param()
+
+  if (-not $script:UpdateTranscriptStarted) {
+    return
+  }
+
+  try {
+    Stop-Transcript | Out-Null
+  } catch {
+    Write-Warning ("Failed to stop transcript log at {0}: {1}" -f $script:UPDATE_LOG_PATH, $_.Exception.Message)
+  } finally {
+    $script:UpdateTranscriptStarted = $false
+  }
+}
+
+function Finalize-UpdateTranscript {
+<#
+.SYNOPSIS
+Moves a completed updater transcript from temp storage into the log folder.
+#>
+  [CmdletBinding()]
+  param()
+
+  if ([string]::IsNullOrWhiteSpace($script:UpdateTranscriptTempPath)) {
+    return
+  }
+
+  try {
+    if (-not (Test-Path -LiteralPath $script:UpdateTranscriptTempPath -PathType Leaf)) {
+      return
+    }
+
     if (-not (Test-Path -LiteralPath $LOG_DIR -PathType Container)) {
       $null = New-Item -ItemType Directory -Path $LOG_DIR -Force
     }
-    Add-Content -LiteralPath $script:UPDATE_LOG_PATH -Value ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message)
+
+    $timestampText = $script:UpdateTranscriptTimestamp.ToString('yyyy-MM-dd_HH.mm.ss')
+    $script:UpdateTranscriptFinalPath = Join-Path $LOG_DIR ("Update-GetHealthCode-{0}.log" -f $timestampText)
+    Move-Item -LiteralPath $script:UpdateTranscriptTempPath -Destination $script:UpdateTranscriptFinalPath -Force -ErrorAction Stop
   } catch {
-    Write-Verbose ("Failed writing update event log to {0}: {1}" -f $script:UPDATE_LOG_PATH, $_.Exception.Message)
+    Write-Warning ("Failed to finalize transcript log from {0}: {1}" -f $script:UpdateTranscriptTempPath, $_.Exception.Message)
+  } finally {
+    $script:UpdateTranscriptTempPath = $null
   }
 }
 
@@ -90,9 +845,13 @@ None.
     return
   }
 
+  Write-Verbose "Ensuring NuGet package provider is available for PowerShellGet"
+  Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope $Scope -ErrorAction Stop | Out-Null
+  Import-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction Stop | Out-Null
+
   try {
     Write-Verbose "Installing PowerShell module '$Name' with scope '$Scope'"
-    Install-Module -Name $Name -Scope $Scope -Force -ErrorAction Stop
+    Install-Module -Name $Name -Scope $Scope -Force -Confirm:$false -ErrorAction Stop
     Write-Verbose "Successfully installed PowerShell module '$Name'"
   } catch {
     if ($_.Exception.Message -like "*No repository with the Name 'PSGallery'*") {
@@ -102,7 +861,9 @@ None.
       Write-Verbose "Marking PSGallery as Trusted"
       Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction Stop
       Write-Verbose "Retrying installation of PowerShell module '$Name'"
-      Install-Module -Name $Name -Scope $Scope -Force -ErrorAction Stop
+      Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope $Scope -ErrorAction Stop | Out-Null
+      Import-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction Stop | Out-Null
+      Install-Module -Name $Name -Scope $Scope -Force -Confirm:$false -ErrorAction Stop
       Write-Verbose "Successfully installed PowerShell module '$Name' after registering PSGallery"
     } else {
       throw
@@ -110,29 +871,62 @@ None.
   }
 }
 
+function New-RandomTempDirectoryPath {
+<#
+.SYNOPSIS
+Returns an unused "$TempRoot\<Name>.<N>" path where N is between 0 and 9999.
+.OUTPUTS
+System.String. A currently unused temporary directory path.
+#>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$TempRoot,
+    [Parameter(Mandatory)][string]$Name
+  )
+
+  for ($attempt = 0; $attempt -lt 100; $attempt++) {
+    $suffix = Get-Random -Minimum 0 -Maximum 10000
+    $candidate = Join-Path $TempRoot ("{0}.{1}" -f $Name, $suffix)
+    if (-not (Test-Path -LiteralPath $candidate -ErrorAction SilentlyContinue)) {
+      return $candidate
+    }
+  }
+
+  throw "Could not find an available temporary directory matching '$Name.<N>' under '$TempRoot' after 100 attempts."
+}
+
 function New-EmptyTempDirectory {
 <#
 .SYNOPSIS
-Creates a directory at "$env:TEMP\<Name>" and returns its full path.
+Creates a reusable temporary directory and returns its full path.
 .OUTPUTS
 System.String. The full path of the created directory under $env:TEMP.
 #>
   [CmdletBinding()]
   param([string]$Name)
 
-  $tmdDir = Join-Path $env:TEMP $Name
+  $tempRoot = $env:TEMP
+  if ([string]::IsNullOrWhiteSpace($tempRoot)) {
+    $tempRoot = [System.IO.Path]::GetTempPath()
+  }
+
+  $tmdDir = Join-Path $tempRoot $Name
   Write-Verbose "Preparing temporary directory '$tmdDir'"
 
-  if (Test-Path -Path $tmdDir) {
-    if (Test-Path -Path $tmdDir -PathType Container) {
+  if (Test-Path -LiteralPath $tmdDir) {
+    if (Test-Path -LiteralPath $tmdDir -PathType Container) {
       Write-Verbose "Temporary directory already exists; clearing its contents: '$tmdDir'"
-      Get-ChildItem -Path $tmdDir -Recurse -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+      try {
+        Get-ChildItem -LiteralPath $tmdDir -Recurse -Force -ErrorAction Stop |
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+      } catch {
+        Write-Warning ("Could not clear temporary directory '{0}': {1}" -f $tmdDir, $_.Exception.Message)
+        $tmdDir = New-RandomTempDirectoryPath -TempRoot $tempRoot -Name $Name
+        Write-Verbose "Using alternate temporary directory '$tmdDir'"
+      }
     } else {
       Write-Verbose "A file already exists at '$tmdDir'; generating a unique directory name"
-      while (Test-Path -Path $tmdDir) {
-        $suffix = Get-Random -Minimum 100000 -Maximum 1000000
-        $tmdDir = Join-Path $env:TEMP "$Name-$suffix"
-      }
+      $tmdDir = New-RandomTempDirectoryPath -TempRoot $tempRoot -Name $Name
       Write-Verbose "Using alternate temporary directory '$tmdDir'"
     }
   }
@@ -199,6 +993,30 @@ or $null when no version-like token can be identified.
   }
 
   return $null
+}
+
+function ConvertTo-GetComputerHealthVersionToken {
+<#
+.SYNOPSIS
+Normalizes a user-provided version string into the internal vX.Y.Z form.
+.DESCRIPTION
+Accepts versions like 1.2.3 or v1.2.3 and returns v1.2.3.
+Returns null when no value was provided.
+#>
+  [CmdletBinding()]
+  param([AllowNull()][string]$Version)
+
+  if ([string]::IsNullOrWhiteSpace($Version)) {
+    return $null
+  }
+
+  $trimmedVersion = $Version.Trim()
+  $match = [regex]::Match($trimmedVersion, '^(?:v)?(?<Version>\d+\.\d+\.\d+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if (-not $match.Success) {
+    throw "Invalid -Version value '$Version'. Use semantic version format X.Y.Z."
+  }
+
+  return ('v{0}' -f $match.Groups['Version'].Value)
 }
 
 function Test-GetComputerHealthMarkerEquivalent {
@@ -413,7 +1231,8 @@ Hashtable with keys: SourceFullPath, ZipLastWriteTimeIso, CachedZipPath, ZipSha2
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$ZipPath,
-    [Parameter(Mandatory)][string]$CacheDir
+    [Parameter(Mandatory)][string]$CacheDir,
+    [string]$Version
   )
 
   if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
@@ -430,10 +1249,23 @@ Hashtable with keys: SourceFullPath, ZipLastWriteTimeIso, CachedZipPath, ZipSha2
   $zipLastWriteIso = $zipLastWrite.ToString('o')
   $zipHash = (Get-FileHash -LiteralPath $sourceFullPath -Algorithm SHA256 -ErrorAction Stop).Hash
   $zipLastWriteToken = $zipLastWrite.ToString('yyyyMMdd-HHmmss')
-  $cachedZipPath = Join-Path $CacheDir ("GetComputerHealth-MANUAL-UPDATE-{0}.zip" -f $zipLastWriteToken)
   $zipTag = [System.IO.Path]::GetFileNameWithoutExtension($zipItem.Name)
   if ([string]::IsNullOrWhiteSpace($zipTag)) { $zipTag = 'manual' }
   $manualMarker = ("manual-zip|{0}|{1}" -f $zipTag, $zipHash)
+  $markerVersionToken = Get-GetComputerHealthVersionFromMarker -Marker $manualMarker
+  $requestedVersionToken = ConvertTo-GetComputerHealthVersionToken -Version $Version
+
+  if (-not $markerVersionToken) {
+    if (-not $requestedVersionToken) {
+      throw "Manual update zip file name must embed a semver tag like 'v1.2.3' unless -Version '1.2.3' is supplied. Zip: $sourceFullPath"
+    }
+    $manualMarker = ("manual-zip|{0}|{1}" -f $requestedVersionToken, $zipHash)
+  } elseif ($requestedVersionToken -and ($requestedVersionToken -ine $markerVersionToken)) {
+    throw "Provided -Version '$Version' does not match the semver '$markerVersionToken' embedded in zip file name '$($zipItem.Name)'."
+  }
+
+  $cacheVersionToken = if ($markerVersionToken) { $markerVersionToken } else { $requestedVersionToken }
+  $cachedZipPath = Join-Path $CacheDir ("GetComputerHealth-MANUAL-UPDATE-{0}-{1}.zip" -f $cacheVersionToken, $zipLastWriteToken)
 
   $samePath = $false
   if (Test-Path -LiteralPath $cachedZipPath -PathType Leaf) {
@@ -817,6 +1649,61 @@ $false - No files changed.
 
   return $changed
 }
+
+function Get-NormalizedFileSystemPath {
+<#
+.SYNOPSIS
+Returns a full filesystem path string suitable for path comparison.
+.DESCRIPTION
+Accepts existing and missing paths and removes trailing slashes.
+Use it when Resolve-Path alone would reject paths that do not exist yet.
+.OUTPUTS
+System.String. A full path string without trailing slashes.
+#>
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Path)
+
+  try {
+    if (Test-Path -LiteralPath $Path) {
+      return ((Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path).TrimEnd('\','/')
+    }
+  } catch {
+  }
+
+  return ([System.IO.Path]::GetFullPath($Path)).TrimEnd('\','/')
+}
+
+function Get-GetComputerHealthScriptVersion {
+<#
+.SYNOPSIS
+Returns the embedded semantic version from a script file when present.
+.DESCRIPTION
+Returns null when the file is missing or when no supported version
+assignment is found. Writes a warning if the file exists but cannot be
+read.
+.OUTPUTS
+System.String. A version like 4.1.3, or null when no version is
+available.
+#>
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$ScriptPath)
+
+  if (-not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+    return $null
+  }
+
+  try {
+    $content = Get-Content -LiteralPath $ScriptPath -Raw -ErrorAction Stop
+    $match = [regex]::Match($content, '(?im)^\s*\$VERSION\s*=\s*["''](?<version>\d+\.\d+\.\d+)["'']')
+    if ($match.Success) {
+      return $match.Groups['version'].Value
+    }
+  } catch {
+    Write-Warning ("Failed reading version from {0}: {1}" -f $ScriptPath, $_.Exception.Message)
+  }
+
+  return $null
+}
 #
 #  HELPER FUNCTIONS END
 #
@@ -826,261 +1713,273 @@ $false - No files changed.
 #
 #  MAIN CODE
 #
-$passNumber = $SelfRerunCount + 1
-$passLabel = "[pass $passNumber/2]"
-
-Write-Verbose "$passLabel Starting Update-GetHealthCode"
-Write-Verbose "$passLabel Parameters: Reinstall=$Reinstall UpdateFromZip='$UpdateFromZip' ForceRefreshReleaseMetadata=$ForceRefreshReleaseMetadata SelfRerunCount=$SelfRerunCount PersistReleaseMarker='$PersistReleaseMarker'"
-Write-UpdateEvent "$passLabel Parameters: Reinstall=$Reinstall UpdateFromZip='$UpdateFromZip' ForceRefreshReleaseMetadata=$ForceRefreshReleaseMetadata SelfRerunCount=$SelfRerunCount PersistReleaseMarker='$PersistReleaseMarker'"
-Write-Verbose "Configuration:"
-Write-Verbose "  DEST_DIR                    : $DEST_DIR"
-Write-Verbose "  BAK_DIR                     : $BAK_DIR"
-Write-Verbose "  CFG_DIR                     : $CFG_DIR"
-Write-Verbose "  REPO_URL                    : $REPO_URL"
-Write-Verbose "  REPO_REF                    : $REPO_REF"
-Write-Verbose "  LATEST_RELEASE_METADATA_CACHE_PATH : $LATEST_RELEASE_METADATA_CACHE_PATH"
-Write-Verbose "  RELEASE_METADATA_CACHE_TTL_MINUTES : $RELEASE_METADATA_CACHE_TTL_MINUTES"
-Write-Verbose "  ZIP_CACHE_PATTERN           : $ZIP_CACHE_PATTERN"
-Write-Verbose "  MANUAL_ZIP_CACHE_PATTERN    : $MANUAL_ZIP_CACHE_PATTERN"
-Write-Verbose "  repoSlug                    : $repoSlug"
-
-if (-not (Test-Path $DEST_DIR)) {
-  Write-Verbose "Creating destination directory '$DEST_DIR'"
-  New-Item -ItemType Directory -Path $DEST_DIR | Out-Null
-} else {
-  Write-Verbose "Destination directory already exists: '$DEST_DIR'"
-}
-
-if (-not (Test-Path $BAK_DIR)) {
-  Write-Verbose "Creating backup/cache directory '$BAK_DIR'"
-  New-Item -ItemType Directory -Path $BAK_DIR | Out-Null
-} else {
-  Write-Verbose "Backup/cache directory already exists: '$BAK_DIR'"
-}
-
-if (-not (Test-Path $CFG_DIR)) {
-  Write-Verbose "Creating configuration directory '$CFG_DIR'"
-  New-Item -ItemType Directory -Path $CFG_DIR | Out-Null
-} else {
-  Write-Verbose "Configuration directory already exists: '$CFG_DIR'"
-}
-
-Ensure-PSModuleInstalled -Name ImportExcel
-
-$p = Join-Path $CFG_DIR 'Get-ComputerHealth.sigs-to-suppress.txt'
-if (-not (Test-Path $p)) {
-  Write-Verbose "Creating default suppressions file '$p'"
-  $null = mkdir $CFG_DIR -Force -ErrorAction Ignore
-  "# $($env:COMPUTERNAME)" | Out-File $p -Encoding UTF8
-} else {
-  Write-Verbose "Suppressions file already exists: '$p'"
-}
-
-$latestRelease = $null
-$latestReleaseMarker = $null
-$manualUpdateMarker = $null
-$manualUpdateFetchedAt = $null
-if (-not $UpdateFromZip) {
-  Write-Verbose "$passLabel Resolving latest release metadata (cache TTL $RELEASE_METADATA_CACHE_TTL_MINUTES minutes)"
-  try {
-    $latestRelease = Get-GetComputerHealthLatestRelease -RepositoryUrl $REPO_URL -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -CacheTtlMinutes $RELEASE_METADATA_CACHE_TTL_MINUTES -ForceRefresh:$ForceRefreshReleaseMetadata
-    $latestReleaseMarker = Convert-GetComputerHealthReleaseToMarker -RepositoryUrl $REPO_URL -Release $latestRelease
-    Write-Verbose "$passLabel Latest release marker is '$latestReleaseMarker'"
-    Write-UpdateEvent "$passLabel Latest release marker is '$latestReleaseMarker'"
-  } catch {
-    Write-Warning ("Could not query latest release metadata from {0}: {1}" -f $REPO_URL, $_.Exception.Message)
-  }
-} else {
-  Write-Verbose "-UpdateFromZip specified; skipping latest release marker query"
-  $manualUpdateZip = Prepare-ManualUpdateZip -ZipPath $UpdateFromZip -CacheDir $BAK_DIR
-  $manualUpdateMarker = [string]$manualUpdateZip.ManualMarker
-  $manualUpdateFetchedAt = [string]$manualUpdateZip.ZipLastWriteTimeIso
-  Write-Verbose "Manual update marker is '$manualUpdateMarker'"
-  Write-Verbose "Manual update fetchedAt is '$manualUpdateFetchedAt'"
-}
-
-if ($latestReleaseMarker) {
-  $storedReleaseMarker = Get-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH
-
-  if ($storedReleaseMarker) {
-    Write-Verbose "Stored installed release marker is '$storedReleaseMarker'"
-    Write-UpdateEvent "Stored installed release marker is '$storedReleaseMarker'"
-  } else {
-    Write-Verbose "No stored installed release marker is available yet"
-  }
-
-  if ((-not $Reinstall) -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $latestReleaseMarker)) {
-    $storedVersion = Get-GetComputerHealthVersionFromMarker -Marker $storedReleaseMarker
-    $latestVersion = Get-GetComputerHealthVersionFromMarker -Marker $latestReleaseMarker
-    if (($storedReleaseMarker -ne $latestReleaseMarker) -and $storedVersion -and $latestVersion -and ($storedVersion -ieq $latestVersion)) {
-      Write-Verbose "Installed marker came from a different source but matches latest version '$latestVersion'; skipping update download"
-      Write-UpdateEvent "Installed marker came from a different source but matches latest version '$latestVersion'; skipping update download"
-    } else {
-      Write-Verbose "Latest release already downloaded and -Reinstall was not specified; skipping update download"
-      Write-UpdateEvent "Latest release already downloaded and -Reinstall was not specified; skipping update download"
-    }
-    return
-  }
-
-  if ($Reinstall -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $latestReleaseMarker)) {
-    Write-Verbose "-Reinstall was specified; re-downloading current latest release"
-  }
-} elseif ($manualUpdateMarker) {
-  $storedReleaseMarker = Get-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH
-
-  if ($storedReleaseMarker) {
-    Write-Verbose "Stored installed release marker is '$storedReleaseMarker'"
-    Write-UpdateEvent "Stored installed release marker is '$storedReleaseMarker'"
-  } else {
-    Write-Verbose "No stored installed release marker is available yet"
-  }
-
-  if ((-not $Reinstall) -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $manualUpdateMarker)) {
-    $storedVersion = Get-GetComputerHealthVersionFromMarker -Marker $storedReleaseMarker
-    $manualVersion = Get-GetComputerHealthVersionFromMarker -Marker $manualUpdateMarker
-    if (($storedReleaseMarker -ne $manualUpdateMarker) -and $storedVersion -and $manualVersion -and ($storedVersion -ieq $manualVersion)) {
-      Write-Verbose "Provided zip matches already installed version '$manualVersion' even though the source marker differs; skipping update"
-      Write-UpdateEvent "Provided zip matches already installed version '$manualVersion' even though the source marker differs; skipping update"
-    } else {
-      Write-Verbose "Provided zip marker already installed and -Reinstall was not specified; skipping update"
-      Write-UpdateEvent "Provided zip marker already installed and -Reinstall was not specified; skipping update"
-    }
-    return
-  }
-} else {
-  Write-Verbose "$passLabel No latest release marker is available"
-}
-
-Write-Verbose "$passLabel Checking for code updates; local files will be backed up before replacement if needed"
-$tmdDir = New-EmptyTempDirectory -Name "Update-GetHealthCode"
-$releaseRoot = $null
-$preparedZipPath = $null
-
+Start-UpdateTranscript
 try {
-  if ($UpdateFromZip) {
-    Write-Verbose "$passLabel Updating from provided zip '$UpdateFromZip'"
-    Write-UpdateEvent "$passLabel Updating from provided zip '$UpdateFromZip'"
-    $preparedRelease = Expand-ReleaseFromZipFile -ZipPath $UpdateFromZip -TempPath $tmdDir
-    Keep-OnlyLatestReleaseZips -CacheDir $BAK_DIR -Pattern $MANUAL_ZIP_CACHE_PATTERN -KeepCount 4
+  $passNumber = $SelfRerunCount + 1
+  $passLabel = "[pass $passNumber/2]"
+
+  Write-Verbose "$passLabel Starting Update-GetHealthCode"
+  Write-Verbose "$passLabel Parameters: Reinstall=$Reinstall UpdateFromZip='$UpdateFromZip' Version='$Version' ForceRefreshReleaseMetadata=$ForceRefreshReleaseMetadata SelfRerunCount=$SelfRerunCount PersistReleaseMarker='$PersistReleaseMarker'"
+  Write-UpdateEvent "$passLabel Parameters: Reinstall=$Reinstall UpdateFromZip='$UpdateFromZip' Version='$Version' ForceRefreshReleaseMetadata=$ForceRefreshReleaseMetadata SelfRerunCount=$SelfRerunCount PersistReleaseMarker='$PersistReleaseMarker'"
+  if (-not (Test-Path $DEST_DIR)) {
+    Write-Verbose "Creating destination directory '$DEST_DIR'"
+    New-Item -ItemType Directory -Path $DEST_DIR | Out-Null
   } else {
-    Write-Verbose "$passLabel Updating from latest GitHub release"
-    Write-UpdateEvent "$passLabel Updating from latest GitHub release"
-    if (-not $latestRelease) {
-      $latestRelease = Get-GetComputerHealthLatestRelease -RepositoryUrl $REPO_URL -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -CacheTtlMinutes $RELEASE_METADATA_CACHE_TTL_MINUTES -ForceRefresh:$ForceRefreshReleaseMetadata
-    }
-    $preparedRelease = Expand-GetComputerHealthLatestRelease -RepositoryUrl $REPO_URL -TempPath $tmdDir -ZipCacheDir $BAK_DIR -Release $latestRelease -ForceDownload:$Reinstall
-    Keep-OnlyLatestReleaseZips -CacheDir $BAK_DIR -Pattern $ZIP_CACHE_PATTERN -KeepCount 4
+    Write-Verbose "Destination directory already exists: '$DEST_DIR'"
   }
-  $releaseRoot = $preparedRelease.RootPath
-  $preparedZipPath = $preparedRelease.ZipPath
-  Write-Verbose "$passLabel Release root resolved to '$releaseRoot'"
-  Write-Verbose "$passLabel Prepared zip path is '$preparedZipPath'"
-} catch {
-  throw "Unable to prepare release zip: $($_.Exception.Message)"
-}
 
-$appliedUpdate = $false
-$updated = Replace-FileFromSource -FileName 'Update-GetHealthCode.ps1' -SourcePath $releaseRoot -DestinationPath $DEST_DIR -BackupPath $BAK_DIR
-if ($updated) { $appliedUpdate = $true }
+  if (-not (Test-Path $BAK_DIR)) {
+    Write-Verbose "Creating backup/cache directory '$BAK_DIR'"
+    New-Item -ItemType Directory -Path $BAK_DIR | Out-Null
+  } else {
+    Write-Verbose "Backup/cache directory already exists: '$BAK_DIR'"
+  }
 
-if ($updated) {
-  Write-Verbose "$passLabel This script updated itself"
-  $zipName = if ($preparedZipPath) { Split-Path -Path $preparedZipPath -Leaf } else { '<unknown zip>' }
-  Write-UpdateEvent "Applied GetComputerHealth update from zip '$zipName'"
+  if (-not (Test-Path $CFG_DIR)) {
+    Write-Verbose "Creating configuration directory '$CFG_DIR'"
+    New-Item -ItemType Directory -Path $CFG_DIR | Out-Null
+  } else {
+    Write-Verbose "Configuration directory already exists: '$CFG_DIR'"
+  }
+
+  Ensure-GchConfigFile -Path $GCH_CONFIG_PATH -RepoUrl $REPO_URL -ShowAsPostponedWindowDays $SHOW_AS_POSTPONED_WINDOW_DAYS
+  $gchConfig = Read-GchConfigFile -Path $GCH_CONFIG_PATH
+  if ((Test-GchConfigKey -Config $gchConfig -Key 'AutomaticUpdates') -and (Test-GchFalsyValue -Value (Get-GchConfigValue -Config $gchConfig -Key 'AutomaticUpdates'))) {
+    Write-Warning "Automatic updates are disabled by '$GCH_CONFIG_PATH'. Update-GetHealthCode.ps1 will not make changes."
+    return
+  }
+  if (Test-GchConfigKey -Config $gchConfig -Key 'RepoUrl') {
+    $REPO_URL = Resolve-GchConfiguredRepoUrl -RepoUrl ([string](Get-GchConfigValue -Config $gchConfig -Key 'RepoUrl'))
+  }
+  if (Test-GchConfigKey -Config $gchConfig -Key 'ShowAsPostponedWindowDays') {
+    $SHOW_AS_POSTPONED_WINDOW_DAYS = Resolve-GchConfiguredNonNegativeInteger -Value (Get-GchConfigValue -Config $gchConfig -Key 'ShowAsPostponedWindowDays') -Key 'ShowAsPostponedWindowDays'
+  }
+  $repoSlug = (($REPO_URL -replace '^https?://github\.com/','') -replace '\.git$','').Trim('/')
+  Write-Verbose "Loaded Get-ComputerHealth configuration from '$GCH_CONFIG_PATH'"
+  Write-Verbose "Configuration:"
+  Write-Verbose "  DEST_DIR                    : $DEST_DIR"
+  Write-Verbose "  BAK_DIR                     : $BAK_DIR"
+  Write-Verbose "  CFG_DIR                     : $CFG_DIR"
+  Write-Verbose "  GCH_CONFIG_PATH             : $GCH_CONFIG_PATH"
+  Write-Verbose "  REPO_URL                    : $REPO_URL"
+  Write-Verbose "  REPO_REF                    : $REPO_REF"
+  Write-Verbose "  SHOW_AS_POSTPONED_WINDOW_DAYS : $SHOW_AS_POSTPONED_WINDOW_DAYS"
+  Write-Verbose "  LATEST_RELEASE_METADATA_CACHE_PATH : $LATEST_RELEASE_METADATA_CACHE_PATH"
+  Write-Verbose "  RELEASE_METADATA_CACHE_TTL_MINUTES : $RELEASE_METADATA_CACHE_TTL_MINUTES"
+  Write-Verbose "  ZIP_CACHE_PATTERN           : $ZIP_CACHE_PATTERN"
+  Write-Verbose "  MANUAL_ZIP_CACHE_PATTERN    : $MANUAL_ZIP_CACHE_PATTERN"
+  Write-Verbose "  repoSlug                    : $repoSlug"
+
+  Ensure-PSModuleInstalled -Name ImportExcel
+
+  $p = Join-Path $CFG_DIR 'Get-ComputerHealth.sigs-to-suppress.txt'
+  if (-not (Test-Path $p)) {
+    Write-Verbose "Creating default suppressions file '$p'"
+    $null = mkdir $CFG_DIR -Force -ErrorAction Ignore
+    "# $($env:COMPUTERNAME)" | Out-File $p -Encoding UTF8
+  } else {
+    Write-Verbose "Suppressions file already exists: '$p'"
+  }
+
+  $latestRelease = $null
+  $latestReleaseMarker = $null
+  $manualUpdateMarker = $null
+  $manualUpdateFetchedAt = $null
+  $versionToInstall = $null
+  if (-not $UpdateFromZip) {
+    Write-Verbose "$passLabel Resolving latest release metadata (cache TTL $RELEASE_METADATA_CACHE_TTL_MINUTES minutes)"
+    try {
+      $latestRelease = Get-GetComputerHealthLatestRelease -RepositoryUrl $REPO_URL -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -CacheTtlMinutes $RELEASE_METADATA_CACHE_TTL_MINUTES -ForceRefresh:$ForceRefreshReleaseMetadata
+      $latestReleaseMarker = Convert-GetComputerHealthReleaseToMarker -RepositoryUrl $REPO_URL -Release $latestRelease
+      $versionToInstall = Get-GetComputerHealthVersionFromMarker -Marker $latestReleaseMarker
+      Write-Verbose "$passLabel Latest release marker is '$latestReleaseMarker'"
+      Write-UpdateEvent "$passLabel Latest release marker is '$latestReleaseMarker'"
+    } catch {
+      Write-Warning ("Could not query latest release metadata from {0}: {1}" -f $REPO_URL, $_.Exception.Message)
+    }
+  } else {
+    Write-Verbose "-UpdateFromZip specified; skipping latest release marker query"
+    $manualUpdateZip = Prepare-ManualUpdateZip -ZipPath $UpdateFromZip -CacheDir $BAK_DIR -Version $Version
+    $manualUpdateMarker = [string]$manualUpdateZip.ManualMarker
+    $manualUpdateFetchedAt = [string]$manualUpdateZip.ZipLastWriteTimeIso
+    $versionToInstall = Get-GetComputerHealthVersionFromMarker -Marker $manualUpdateMarker
+    Write-Verbose "Manual update marker is '$manualUpdateMarker'"
+    Write-Verbose "Manual update fetchedAt is '$manualUpdateFetchedAt'"
+  }
 
   if ($latestReleaseMarker) {
-    Write-Verbose "$passLabel Persisting installed release marker before self-rerun"
+    if (-not $versionToInstall) {
+      throw "Could not determine a valid semver-like versionToInstall from latest release marker '$latestReleaseMarker'. Aborting update."
+    }
+
+    $storedReleaseMarker = Get-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH
+
+    if ($storedReleaseMarker) {
+      Write-Verbose "Stored installed release marker is '$storedReleaseMarker'"
+      Write-UpdateEvent "Stored installed release marker is '$storedReleaseMarker'"
+    } else {
+      Write-Verbose "No stored installed release marker is available yet"
+    }
+
+    if (($SelfRerunCount -eq 0) -and (-not $Reinstall) -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $latestReleaseMarker)) {
+      $storedVersion = Get-GetComputerHealthVersionFromMarker -Marker $storedReleaseMarker
+      if (($storedReleaseMarker -ne $latestReleaseMarker) -and $storedVersion -and $versionToInstall -and ($storedVersion -ieq $versionToInstall)) {
+        Write-Verbose "Installed marker came from a different source but matches latest version '$versionToInstall'; skipping update download"
+        Write-UpdateEvent "Installed marker came from a different source but matches latest version '$versionToInstall'; skipping update download"
+      } else {
+        Write-Verbose "Latest release already downloaded and -Reinstall was not specified; skipping update download"
+        Write-UpdateEvent "Latest release already downloaded and -Reinstall was not specified; skipping update download"
+      }
+      return
+    }
+
+    if ($Reinstall -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $latestReleaseMarker)) {
+      Write-Verbose "-Reinstall was specified; re-downloading current latest release"
+    }
+  } elseif ($manualUpdateMarker) {
+    if (-not $versionToInstall) {
+      throw "Could not determine a valid semver-like versionToInstall from manual update marker '$manualUpdateMarker'. Aborting update."
+    }
+
+    $storedReleaseMarker = Get-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH
+
+    if ($storedReleaseMarker) {
+      Write-Verbose "Stored installed release marker is '$storedReleaseMarker'"
+      Write-UpdateEvent "Stored installed release marker is '$storedReleaseMarker'"
+    } else {
+      Write-Verbose "No stored installed release marker is available yet"
+    }
+
+    if (($SelfRerunCount -eq 0) -and (-not $Reinstall) -and $storedReleaseMarker -and (Test-GetComputerHealthMarkerEquivalent -LeftMarker $storedReleaseMarker -RightMarker $manualUpdateMarker)) {
+      $storedVersion = Get-GetComputerHealthVersionFromMarker -Marker $storedReleaseMarker
+      if (($storedReleaseMarker -ne $manualUpdateMarker) -and $storedVersion -and $versionToInstall -and ($storedVersion -ieq $versionToInstall)) {
+        Write-Verbose "Provided zip matches already installed version '$versionToInstall' even though the source marker differs; skipping update"
+        Write-UpdateEvent "Provided zip matches already installed version '$versionToInstall' even though the source marker differs; skipping update"
+      } else {
+        Write-Verbose "Provided zip marker already installed and -Reinstall was not specified; skipping update"
+        Write-UpdateEvent "Provided zip marker already installed and -Reinstall was not specified; skipping update"
+      }
+      return
+    }
+  } else {
+    throw "$passLabel Could not determine a valid semver-like versionToInstall because no release marker is available. Aborting update."
+  }
+
+  Write-Verbose "$passLabel Checking for code updates; local files will be backed up before replacement if needed"
+  $tmdDir = New-EmptyTempDirectory -Name "Update-GetHealthCode"
+  $releaseRoot = $null
+  $preparedZipPath = $null
+
+  try {
+    if ($UpdateFromZip) {
+      Write-Verbose "$passLabel Updating from provided zip '$UpdateFromZip'"
+      Write-UpdateEvent "$passLabel Updating from provided zip '$UpdateFromZip'"
+      $preparedRelease = Expand-ReleaseFromZipFile -ZipPath $UpdateFromZip -TempPath $tmdDir
+      Keep-OnlyLatestReleaseZips -CacheDir $BAK_DIR -Pattern $MANUAL_ZIP_CACHE_PATTERN -KeepCount 4
+    } else {
+      Write-Verbose "$passLabel Updating from latest GitHub release"
+      Write-UpdateEvent "$passLabel Updating from latest GitHub release"
+      if (-not $latestRelease) {
+        $latestRelease = Get-GetComputerHealthLatestRelease -RepositoryUrl $REPO_URL -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -CacheTtlMinutes $RELEASE_METADATA_CACHE_TTL_MINUTES -ForceRefresh:$ForceRefreshReleaseMetadata
+      }
+      $preparedRelease = Expand-GetComputerHealthLatestRelease -RepositoryUrl $REPO_URL -TempPath $tmdDir -ZipCacheDir $BAK_DIR -Release $latestRelease -ForceDownload:$Reinstall
+      Keep-OnlyLatestReleaseZips -CacheDir $BAK_DIR -Pattern $ZIP_CACHE_PATTERN -KeepCount 4
+    }
+    $releaseRoot = $preparedRelease.RootPath
+    $preparedZipPath = $preparedRelease.ZipPath
+    Write-Verbose "$passLabel Release root resolved to '$releaseRoot'"
+    Write-Verbose "$passLabel Prepared zip path is '$preparedZipPath'"
+  } catch {
+    throw "Unable to prepare release zip: $($_.Exception.Message)"
+  }
+
+  $appliedUpdate = $false
+  $diskFormatMigration = Invoke-DiskFormatMigrations -RootDir $ROOT_DIR -ReleaseRoot $releaseRoot -TargetCodeVersion $versionToInstall
+  if ($diskFormatMigration.RanMigrations -and (-not [string]::IsNullOrWhiteSpace($diskFormatMigration.UpdaterPath))) {
+    $currentUpdaterPath = Get-NormalizedFileSystemPath -Path $PSCommandPath
+    $migrationUpdaterPath = Get-NormalizedFileSystemPath -Path ([string]$diskFormatMigration.UpdaterPath)
+    if ($migrationUpdaterPath -ine $currentUpdaterPath) {
+      if (-not (Test-Path -LiteralPath $migrationUpdaterPath -PathType Leaf)) {
+        throw "Disk format migration returned updater path '$migrationUpdaterPath', but that file does not exist."
+      }
+
+      Write-Verbose "$passLabel Running updater returned by disk format migration: '$migrationUpdaterPath'"
+      Stop-UpdateTranscript
+      & $migrationUpdaterPath @PSBoundParameters
+      return
+    }
+  }
+
+  $updated = Replace-FileFromSource -FileName 'Update-GetHealthCode.ps1' -SourcePath $releaseRoot -DestinationPath $DEST_DIR -BackupPath $BAK_DIR
+  if ($updated) { $appliedUpdate = $true }
+
+  if ($updated) {
+    Write-Verbose "$passLabel This script updated itself"
+    $zipName = if ($preparedZipPath) { Split-Path -Path $preparedZipPath -Leaf } else { '<unknown zip>' }
+    Write-UpdateEvent "Applied GetComputerHealth update from zip '$zipName'"
+
+    if ($latestReleaseMarker) {
+      Write-Verbose "$passLabel Persisting installed release marker before self-rerun"
+      Set-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -Marker $latestReleaseMarker
+    } elseif ($manualUpdateMarker) {
+      Write-Verbose "$passLabel Persisting manual update marker before self-rerun"
+      Set-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -Marker $manualUpdateMarker -FetchedAt $manualUpdateFetchedAt
+    }
+
+    if ($SelfRerunCount -ge 1) {
+      Write-Verbose "$passLabel Self-rerun already performed once; skipping additional rerun"
+      return
+    }
+
+    $rerunPath = Join-Path $DEST_DIR 'Update-GetHealthCode.ps1'
+    $rerunParameters = @{} + $PSBoundParameters
+    $rerunParameters['SelfRerunCount'] = $SelfRerunCount + 1
+    if ($preparedZipPath -and $UpdateFromZip) {
+      $rerunParameters['UpdateFromZip'] = $preparedZipPath
+    }
+    if ($latestReleaseMarker) {
+      $rerunParameters['PersistReleaseMarker'] = $latestReleaseMarker
+    }
+
+    Write-Verbose "$passLabel Rerunning updated copy '$rerunPath' with one-time self-rerun guard"
+    Stop-UpdateTranscript
+    & $rerunPath @rerunParameters
+    return
+  }
+
+  if (Install-ReleaseFilesFromSource -SourcePath $releaseRoot -DestinationPath $DEST_DIR -BackupPath $BAK_DIR -ExcludeRelativePaths @('Update-GetHealthCode.ps1')) { $appliedUpdate = $true }
+
+  if ($appliedUpdate) {
+    $zipName = if ($preparedZipPath) { Split-Path -Path $preparedZipPath -Leaf } else { '<unknown zip>' }
+    Write-UpdateEvent "Applied GetComputerHealth update from zip '$zipName'"
+  }
+
+  if ($PersistReleaseMarker) {
+    Set-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -Marker $PersistReleaseMarker
+  } elseif ($latestReleaseMarker) {
     Set-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -Marker $latestReleaseMarker
   } elseif ($manualUpdateMarker) {
-    Write-Verbose "$passLabel Persisting manual update marker before self-rerun"
     Set-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -Marker $manualUpdateMarker -FetchedAt $manualUpdateFetchedAt
   }
 
-  if ($SelfRerunCount -ge 1) {
-    Write-Verbose "$passLabel Self-rerun already performed once; skipping additional rerun"
-    return
-  }
+  try {
+    $backupRetentionCutoff = (Get-Date).AddMonths(-1)
+    Write-Verbose "Pruning backup .bak files older than '$backupRetentionCutoff' from '$BAK_DIR'"
 
-  $rerunPath = Join-Path $DEST_DIR 'Update-GetHealthCode.ps1'
-  $rerunParameters = @{} + $PSBoundParameters
-  $rerunParameters['SelfRerunCount'] = $SelfRerunCount + 1
-  if ($preparedZipPath) {
-    $rerunParameters['UpdateFromZip'] = $preparedZipPath
-  }
-  if ($latestReleaseMarker) {
-    $rerunParameters['PersistReleaseMarker'] = $latestReleaseMarker
-  }
+    $oldBackups = Get-ChildItem -LiteralPath $BAK_DIR -File -Filter '*.bak' -ErrorAction Stop |
+      Where-Object { $_.LastWriteTime -lt $backupRetentionCutoff }
 
-  Write-Verbose "$passLabel Rerunning updated copy '$rerunPath' with one-time self-rerun guard"
-  & $rerunPath @rerunParameters
-  return
-}
-
-if (Install-ReleaseFilesFromSource -SourcePath $releaseRoot -DestinationPath $DEST_DIR -BackupPath $BAK_DIR -ExcludeRelativePaths @('Update-GetHealthCode.ps1')) { $appliedUpdate = $true }
-
-if ($appliedUpdate) {
-  $zipName = if ($preparedZipPath) { Split-Path -Path $preparedZipPath -Leaf } else { '<unknown zip>' }
-  Write-UpdateEvent "Applied GetComputerHealth update from zip '$zipName'"
-}
-
-if ($PersistReleaseMarker) {
-  Set-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -Marker $PersistReleaseMarker
-} elseif ($latestReleaseMarker) {
-  Set-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -Marker $latestReleaseMarker
-} elseif ($manualUpdateMarker) {
-  Set-GetComputerHealthInstalledReleaseMarker -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -Marker $manualUpdateMarker -FetchedAt $manualUpdateFetchedAt
-}
-
-if ((Get-Date) -le [datetime]'2026-04-30') {
-  Write-Verbose "Executing cleanups of obsolete files"
-
-  $obsoleteFiles = @(
-    (Join-Path $CFG_DIR  'Get-ComputerHealth-latest-release.dat')
-    (Join-Path $DEST_DIR 'lib-helpers-for-health-tests.ps1')
-    (Join-Path $DEST_DIR 'lib-health-tests.ps1')
-    (Join-Path $DEST_DIR 'ht-DC-PDC.ps1')
-    (Join-Path $DEST_DIR 'ht-DNS.ps1')
-    (Join-Path $DEST_DIR 'ht-DHCP.ps1')
-    (Join-Path $DEST_DIR 'ht-syscfg-featdisc.ps1')
-    (Join-Path $DEST_DIR 'ht-srvc-exe-resolve.ps1')
-    (Join-Path $DEST_DIR 'ht-file-dir-anlz.ps1')
-    (Join-Path $DEST_DIR 'ht-schtasks-master.ps1')
-    (Join-Path $DEST_DIR 'ht-net-conn.ps1')
-    (Join-Path $DEST_DIR 'ht-os-perf-hw.ps1')
-    (Join-Path $DEST_DIR 'ht-win-os-hyg.ps1')
-    (Join-Path $DEST_DIR 'ht-hypervisor.ps1')
-    (Join-Path $DEST_DIR 'ht-DomJoined.ps1')
-    (Join-Path $DEST_DIR 'ht-member.ps1')
-    (Join-Path $DEST_DIR 'ht-mobile.ps1')
-    (Join-Path $DEST_DIR 'ht-servers.ps1')
-    (Join-Path $DEST_DIR 'ht-AD-GPO-mgmt.ps1')
-    (Join-Path $DEST_DIR 'ht-DNS-DHCP-srvc.ps1')
-    (Join-Path $DEST_DIR 'ht-hyperv-mgmt.ps1')
-    (Join-Path $DEST_DIR 'ht-special.ps1')
-  )
-
-  foreach ($fpath in $obsoleteFiles) {
-    if (Test-Path -LiteralPath $fpath) {
-      Write-Verbose "Removing obsolete file '$fpath'"
-      Remove-Item -LiteralPath $fpath
+    foreach ($item in $oldBackups) {
+      Write-Verbose "Deleting old backup file '$($item.FullName)'"
     }
-  }
-}
 
-try {
-  $backupRetentionCutoff = (Get-Date).AddMonths(-1)
-  Write-Verbose "Pruning backup .bak files older than '$backupRetentionCutoff' from '$BAK_DIR'"
-
-  $oldBackups = Get-ChildItem -LiteralPath $BAK_DIR -File -Filter '*.bak' -ErrorAction Stop |
-    Where-Object { $_.LastWriteTime -lt $backupRetentionCutoff }
-
-  foreach ($item in $oldBackups) {
-    Write-Verbose "Deleting old backup file '$($item.FullName)'"
+    $oldBackups | Remove-Item -Force -ErrorAction Stop
+  } catch {
+    Write-Warning ("Failed pruning old backups in {0}: {1}" -f $BAK_DIR, $_.Exception.Message)
   }
 
-  $oldBackups | Remove-Item -Force -ErrorAction Stop
-} catch {
-  Write-Warning ("Failed pruning old backups in {0}: {1}" -f $BAK_DIR, $_.Exception.Message)
+  Write-Verbose "Update-GetHealthCode completed"
+} finally {
+  Stop-UpdateTranscript
+  Finalize-UpdateTranscript
 }
-
-Write-Verbose "Update-GetHealthCode completed"

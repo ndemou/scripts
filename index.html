@@ -573,7 +573,16 @@
         <details class="script-details">
           <summary>Read more</summary>
           <p class="script-details-text">Missing files are created. Existing files that differ are replaced.<br>Identical files are left unchanged. If this script updates itself,<br>it re-invokes the updated copy. When replacing a file, backup copies<br>are created in the backups directory.<br>Will set PSGallery as Trusted.</p>
-          <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>None.</p>
+          <p class="script-details-text">The updater also tracks a small &quot;release marker&quot; for the currently<br>installed code and for the target update source. A release marker is a<br>stable identifier for a specific release source, typically derived from<br>GitHub release metadata or from a manually supplied zip file name plus<br>its content hash. These markers are cached locally and let the updater<br>decide whether the requested update is already installed, whether it can<br>skip re-downloading or reapplying files, and when `-Reinstall` should<br>force the update to run again.</p>
+          <p class="script-details-text">.PARAMETER Reinstall<br>Forces reinstall even when installed release matches target release.</p>
+          <p class="script-details-text">.PARAMETER UpdateFromZip<br>Overides the default which is to fetch the latest GitHub release.</p>
+          <p class="script-details-text">.PARAMETER Version<br>Explicit semantic version to associate with `-UpdateFromZip` when the zip<br>file name does not already embed a version token such as `v4.4.3`.<br>Use `X.Y.Z` or `vX.Y.Z`.</p>
+          <p class="script-details-text">.PARAMETER ForceRefreshReleaseMetadata<br>Overides the default which is to cache latest-release metadata locally<br>for a few minutes (to avoid querying GitHub on every run).</p>
+          <p class="script-details-text">.PARAMETER SelfRerunCount<br>Internal use only. Tracks the one-time self-rerun pass count.</p>
+          <p class="script-details-text">.PARAMETER PersistReleaseMarker<br>Internal use only. Carries the resolved release marker across self-rerun.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Update-GetHealthCode.ps1</p>
+          <p class="script-details-text">Checks the locally cached latest-release metadata, refreshes it from<br>GitHub when needed, and installs the latest published release when it is<br>newer than the currently installed release marker.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Update-GetHealthCode.ps1 -UpdateFromZip C:\Downloads\GetComputerHealth-v4.4.3.zip</p>
         </details>
       </li>
       <li class="script-item">
