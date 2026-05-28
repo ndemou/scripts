@@ -17,6 +17,8 @@ FILE_COLOR = "\033[96m"
 FUNCTION_COLOR = "\033[92m"
 RESET_COLOR = "\033[0m"
 HELP_DIRECTIVE_RE = re.compile(r"^\s*\.(?P<name>[A-Z][A-Z0-9_-]*)\b", re.IGNORECASE)
+SYNOPSIS_DIRECTIVE_RE = re.compile(r"^\s*\.SYN(?:O|OS)PSIS\b(?P<rest>\s+.*)?$", re.IGNORECASE)
+DESCRIPTION_DIRECTIVE_RE = re.compile(r"^\s*\.DESCRIPTION\b(?P<rest>\s+.*)?$", re.IGNORECASE)
 FUNCTION_HEADER_RE = re.compile(
     r"^\s*(function|filter)\b|^\s*\[[A-Za-z][^\]]*\]\s*$|^\s*param\s*\(|^\s*{\s*$",
     re.IGNORECASE,
@@ -137,9 +139,12 @@ def extract_synopsis(comment_lines: list[str]) -> tuple[str | None, str | None]:
         return None, None
 
     synopsis_index = None
+    synopsis_inline = None
     for i, line in enumerate(comment_lines):
-        if re.match(r"^\s*\.SYN(?:O|OS)PSIS\s*$", line, re.IGNORECASE):
+        synopsis_match = SYNOPSIS_DIRECTIVE_RE.match(line)
+        if synopsis_match:
             synopsis_index = i
+            synopsis_inline = (synopsis_match.group("rest") or "").strip() or None
             break
 
     if synopsis_index is None:
@@ -148,6 +153,8 @@ def extract_synopsis(comment_lines: list[str]) -> tuple[str | None, str | None]:
 
     synopsis_lines: list[str] = []
     details_lines = comment_lines[:synopsis_index]
+    if synopsis_inline:
+        synopsis_lines.append(synopsis_inline)
     i = synopsis_index + 1
     while i < len(comment_lines):
         if HELP_DIRECTIVE_RE.match(comment_lines[i]):
@@ -169,8 +176,13 @@ def cleanup_details(details: str | None) -> str | None:
     lines = details.splitlines()
     while lines and not lines[0].strip():
         lines.pop(0)
-    if lines and re.match(r"^\s*\.DESCRIPTION\s*$", lines[0], re.IGNORECASE):
-        lines.pop(0)
+    if lines:
+        description_match = DESCRIPTION_DIRECTIVE_RE.match(lines[0])
+        if description_match:
+            lines.pop(0)
+            description_inline = (description_match.group("rest") or "").strip()
+            if description_inline:
+                lines.insert(0, description_inline)
     while lines and not lines[0].strip():
         lines.pop(0)
 
@@ -180,8 +192,12 @@ def cleanup_details(details: str | None) -> str | None:
 
 def extract_explicit_synopsis(comment_lines: list[str]) -> str | None:
     for i, line in enumerate(comment_lines):
-        if re.match(r"^\s*\.SYN(?:O|OS)PSIS\s*$", line, re.IGNORECASE):
+        synopsis_match = SYNOPSIS_DIRECTIVE_RE.match(line)
+        if synopsis_match:
             synopsis_lines: list[str] = []
+            synopsis_inline = (synopsis_match.group("rest") or "").strip()
+            if synopsis_inline:
+                synopsis_lines.append(synopsis_inline)
             j = i + 1
             while j < len(comment_lines):
                 if HELP_DIRECTIVE_RE.match(comment_lines[j]):

@@ -26,6 +26,28 @@ class BuildIndexTests(unittest.TestCase):
         self.assertIsNotNone(doc.function_docs)
         self.assertGreater(len(doc.function_docs), 0)
 
+    def test_extract_function_docs_handles_inline_comment_based_help(self) -> None:
+        text = """function Get-DiskInfo {
+    <#
+    .SYNOPSIS Gets Win32_LogicalDisk information for one disk.
+    .DESCRIPTION Popular properties: FreeSpace, Size, VolumeName, DriveType
+    .PARAMETER Disk Disk device ID, for example C:.
+    #>
+    param([string]$Disk)
+}
+"""
+
+        docs = build_index.extract_function_docs(text)
+
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0].name, "Get-DiskInfo")
+        self.assertEqual(docs[0].synopsis, "Gets Win32_LogicalDisk information for one disk.")
+        self.assertEqual(
+            docs[0].details,
+            "Popular properties: FreeSpace, Size, VolumeName, DriveType\n"
+            ".PARAMETER Disk Disk device ID, for example C:.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
