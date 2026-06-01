@@ -61,7 +61,7 @@ Test-IpReachability -Ip '10.1.11.50,10.1.11.55 10.1.11.56' `
     if($s -match '[,\s]'){ $ips=@($s -split '[,\s]+' | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() }) }
     else { $ips=@($s) }
   } elseif($Ip -is [System.Collections.IEnumerable]){
-    foreach($x in $Ip){ if($x -ne $null -and "$x".Trim()){ $ips += "$x".Trim() } }
+    foreach($x in $Ip){ if($null -ne $x -and "$x".Trim()){ $ips += "$x".Trim() } }
   } else { $ips=@("$Ip".Trim()) }
   if($ips.Count -eq 0){ return @() }
   $ips=@($ips | Select-Object -Unique)
@@ -123,7 +123,6 @@ Test-IpReachability -Ip '10.1.11.50,10.1.11.55 10.1.11.56' `
     foreach($b in $batch){
       $a=$b.ip; $st=$state[$a]
       $statusName=$null
-      $note=$null
 
       try{
         if($b.task.IsFaulted){
@@ -228,7 +227,7 @@ Overall time budget for the entire batch, in milliseconds. Defaults to
 Test-TcpPort -Target '10.1.11.1' -Ports 80,443,4444
 
 .EXAMPLE
-Test-TcpPort -Target 'timesheet-gr.forvismazars.com' -Ports '80,443,4444' `
+Test-TcpPort -Target 'google.com' -Ports '80,443,4444' `
   -TimeoutMs 1000
 #>
   [CmdletBinding()]
@@ -255,9 +254,8 @@ Test-TcpPort -Target 'timesheet-gr.forvismazars.com' -Ports '80,443,4444' `
   elseif($Ports -is [int[]]){ $portsList=$Ports }
   elseif($Ports -is [string]){
     foreach($tok in ($Ports -split '[^\d]+')){ if($tok -match '^\d+$'){ $portsList += [int]$tok } }
-  }
-  elseif($Ports -is [System.Collections.IEnumerable]){
-    foreach($p in $Ports){ if($p -ne $null -and "$p" -match '^\d+$'){ $portsList += [int]$p } }
+  } elseif($Ports -is [System.Collections.IEnumerable]){
+    foreach($p in $Ports){ if($null -ne $p -and "$p" -match '^\d+$'){ $portsList += [int]$p } }
   } else {
     if("$Ports" -match '^\d+$'){ $portsList=@([int]$Ports) }
   }
@@ -344,6 +342,7 @@ Notes / interpretation
 - A TCP port is considered CLOSED/FILTERED if the connect fails or does not complete within the timeout.
 - If OpenPorts/ClosedPorts are omitted, only the ping expectation is validated.
 - If -SkipPing is used, only port expectations are validated.
+- If -HostFriendlyName is passed, it is used to refer to the host in all messages.
 
 Example
   Test-NetConnectivityToHost -TargetHost 10.30.0.2 -RespondsToPing:$true -OpenPorts @(53,88,135,389,445) -ClosedPorts @(22,3389) -PortTimeoutMs 1000
@@ -359,6 +358,8 @@ Example (boolean result only)
     [Parameter(Mandatory=$true)]
     [Alias('Host')]
     [string]$TargetHost,
+
+    [string]$HostFriendlyName,
 
     [Parameter(Mandatory=$true, ParameterSetName='Ping')]
     [bool]$RespondsToPing,
@@ -384,6 +385,8 @@ Example (boolean result only)
   }
 
   $ok=$true
+  $displayName = if ([string]::IsNullOrWhiteSpace($HostFriendlyName)) { $TargetHost } else { $HostFriendlyName }
+  
   $openExpected=@(); if($OpenPorts){ $openExpected=@($OpenPorts | ForEach-Object { [int]$_ } | Sort-Object -Unique) }
   $closedExpected=@(); if($ClosedPorts){ $closedExpected=@($ClosedPorts | ForEach-Object { [int]$_ } | Sort-Object -Unique) }
 
@@ -397,23 +400,23 @@ Example (boolean result only)
   $isIPv4 = ($targetName -match '^\d{1,3}(\.\d{1,3}){3}$')
   $isIPv6 = ($targetName -match '^([0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}$' -or $targetName -match '^::1$')
 
-  if($isIPv4 -or $isIPv6){
+  if ($isIPv4 -or $isIPv6) {
     $TargetIp = $targetName
   } else {
     try {
-      if(Get-Command Resolve-DnsName -ErrorAction SilentlyContinue){
+      if (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue) {
         $TargetIp = Resolve-DnsName -Name $targetName -Type A -ErrorAction Stop | Select-Object -ExpandProperty IPAddress -First 1
       } else {
         $TargetIp = ([System.Net.Dns]::GetHostAddresses($targetName) | Select-Object -First 1).IPAddressToString
       }
     } catch {
-      $ok=$false
-      & $LogFailure "Failed to resolve $($TargetHost): $($_.Exception.Message)"
+      $ok = $false
+      & $LogFailure "Failed to resolve $($displayName): $($_.Exception.Message)"
     }
 
-    if(-not $TargetIp){
-      & $LogFailure "Failed to resolve $TargetHost"
-      if($ReturnTrueFalse){ return $false }
+    if (-not $TargetIp) {
+      & $LogFailure "Failed to resolve $displayName"
+      if ($ReturnTrueFalse) { return $false }
       return
     }
   }
@@ -431,8 +434,8 @@ Example (boolean result only)
         }
       }
     } catch {
-      & $LogFailure ("TCP probe failed for host {0}: {1}" -f $TargetHost, $_.Exception.Message)
-      $ok=$false
+      & $LogFailure ("TCP probe failed for host {0}: {1}" -f $displayName, $_.Exception.Message)
+      $ok = $false
     }
   }
 
@@ -457,41 +460,41 @@ Example (boolean result only)
 
     try { if($pingObj){ $pingObj.Dispose() } } catch {}
 
-    if($RespondsToPing -and -not $pingActual){
-      & $LogFailure "Host $TargetHost was expected to respond to ping, but does not"
-      $ok=$false
+    if ($RespondsToPing -and -not $pingActual) {
+      & $LogFailure "Host $displayName was expected to respond to ping, but does not"
+      $ok = $false
     }
 
-    if((-not $RespondsToPing) -and $pingActual){
-      & $LogFailure "Host $TargetHost was expected to NOT respond to ping, but it does"
-      $ok=$false
-    }
-  }
-
-  foreach($p in $openExpected){
-    $isOpen=$false
-    if($portState.ContainsKey($p)){ $isOpen = [bool]$portState[$p] }
-    if(-not $isOpen){
-      & $LogFailure "Port $($TargetHost):$p was expected to be OPEN, but is not"
-      $ok=$false
+    if ((-not $RespondsToPing) -and $pingActual) {
+      & $LogFailure "Host $displayName was expected to NOT respond to ping, but it does"
+      $ok = $false
     }
   }
 
-  foreach($p in $closedExpected){
-    $isOpen=$false
-    if($portState.ContainsKey($p)){ $isOpen = [bool]$portState[$p] }
-    if($isOpen){
-      & $LogFailure "Port $($TargetHost):$p was expected to be CLOSED/FILTERED, but is not"
-      $ok=$false
+  foreach ($p in $openExpected) {
+    $isOpen = $false
+    if ($portState.ContainsKey($p)) { $isOpen = [bool]$portState[$p] }
+    if (-not $isOpen) {
+      & $LogFailure "Port $($displayName):$p was expected to be OPEN, but is not"
+      $ok = $false
     }
   }
 
-  if($ReturnTrueFalse){
+  foreach ($p in $closedExpected) {
+    $isOpen = $false
+    if ($portState.ContainsKey($p)) { $isOpen = [bool]$portState[$p] }
+    if ($isOpen) {
+      & $LogFailure "Port $($displayName):$p was expected to be CLOSED/FILTERED, but is not"
+      $ok = $false
+    }
+  }
+
+  if ($ReturnTrueFalse) {
     return $ok
   }
 
-  if($ok){
-    & $LogPass "Connectivity to $TargetHost is as expected"
+  if ($ok) {
+    & $LogPass "Connectivity to $displayName is as expected"
   }
 }
 
@@ -564,7 +567,7 @@ instead returns the list of responsive hosts.
     if($s -match '[,\s]'){ $ips=@($s -split '[,\s]+' | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() }) }
     else { $ips=@($s) }
   } elseif($KnownHostIps -is [System.Collections.IEnumerable]){
-    foreach($x in $KnownHostIps){ if($x -ne $null -and "$x".Trim()){ $ips += "$x".Trim() } }
+    foreach($x in $KnownHostIps){ if($null -ne $x -and "$x".Trim()){ $ips += "$x".Trim() } }
   } else { $ips=@("$KnownHostIps".Trim()) }
   $ips=@($ips | Where-Object { $_ } | Select-Object -Unique)
 
