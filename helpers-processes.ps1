@@ -15,24 +15,24 @@ Quotes a string so it can be safely passed as a single argument to a Windows pro
 	'C:\Path With Spaces\'	=> "C:\Path With Spaces\\"
 	'C:\X\"Y"\Z\'			=> "C:\X\\\"Y\\\"\Z\\"
 #>
-function Quote-Win32Arg([AllowNull()][string]$s){
+function Quote-Win32Arg([AllowNull()][string]$s) {
   if ($null -eq $s) { return '""' }
   if ($s.Length -eq 0) { return '""' }
   if ($s -notmatch '[\s"]') { return $s }
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append('"')
-  $i=0
-  while($i -lt $s.Length){
-    $ch=$s[$i]
-    if($ch -eq '\'){
-      $bs=0
-      while($i -lt $s.Length -and $s[$i] -eq '\'){ $bs++; $i++ }
-      if($i -eq $s.Length){ [void]$sb.Append(('\' * ($bs*2))); break }
-      if($s[$i] -eq '"'){ [void]$sb.Append(('\' * ($bs*2+1))); [void]$sb.Append('"'); $i++ }
+  $i = 0
+  while ($i -lt $s.Length) {
+    $ch = $s[$i]
+    if ($ch -eq '\') {
+      $bs = 0
+      while ($i -lt $s.Length -and $s[$i] -eq '\') { $bs++; $i++ }
+      if ($i -eq $s.Length) { [void]$sb.Append(('\' * ($bs * 2))); break }
+      if ($s[$i] -eq '"') { [void]$sb.Append(('\' * ($bs * 2 + 1))); [void]$sb.Append('"'); $i++ }
       else { [void]$sb.Append(('\' * $bs)) }
       continue
     }
-    if($ch -eq '"'){ [void]$sb.Append('\\"'); $i++; continue }
+    if ($ch -eq '"') { [void]$sb.Append('\\"'); $i++; continue }
     [void]$sb.Append($ch); $i++
   }
   [void]$sb.Append('"')
@@ -54,12 +54,12 @@ Iterates through a collection of arguments, applies Win32 escaping to each (via 
 The collection of objects (strings) to be joined. Objects are converted to strings before quoting.
 #>
 function Join-Win32CommandLine {
-  param([Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$ArgumentList)
+  param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$ArgumentList)
   (($ArgumentList | ForEach-Object { Quote-Win32Arg ([string]$_) }) -join ' ')
 }
 
 function New-ScheduledTaskForPSScript {
-<#
+  <#
 .SYNOPSIS
 Registers a Windows Scheduled Task that runs a PowerShell script as SYSTEM.
 
@@ -172,7 +172,7 @@ boundaries).
     [Parameter(Mandatory = $true, ParameterSetName = 'Generic')]
     [Parameter(Mandatory = $true, ParameterSetName = 'Daily')]
     [Parameter(Mandatory = $true, ParameterSetName = 'Weekly')]
-    [ValidateSet('Startup','Daily','Weekly','Hourly','EveryMinute','Manual')]
+    [ValidateSet('Startup', 'Daily', 'Weekly', 'Hourly', 'EveryMinute', 'Manual')]
     [string]$ScheduleType,
 
     [Parameter(Mandatory = $true, ParameterSetName = 'Daily')]
@@ -180,7 +180,7 @@ boundaries).
     [ValidatePattern('^\d{2}:\d{2}$')]
     [string]$Time,
 
-    [Parameter(Mandatory=$true, ParameterSetName='Weekly')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'Weekly')]
     [DayOfWeek[]]$Day,
 
     [string]$TaskPath = '\enLogic\',
@@ -199,13 +199,14 @@ boundaries).
   if (Test-Path -LiteralPath $ScriptFullName) {
     try { $ScriptFullName = (Resolve-Path -LiteralPath $ScriptFullName).ProviderPath }
     catch { throw "Failed to resolve script path: $ScriptPath. Error: $_" }
-  } else {
+  }
+  else {
     throw "Script not found: $ScriptPath"
   }
 
   $scriptFolder = Split-Path -Parent $ScriptFullName
-  $scriptFile   = Split-Path -Leaf  $ScriptFullName
-  $baseName     = [System.IO.Path]::GetFileNameWithoutExtension($scriptFile)
+  $scriptFile = Split-Path -Leaf  $ScriptFullName
+  $baseName = [System.IO.Path]::GetFileNameWithoutExtension($scriptFile)
 
   if (-not $TaskName) { $TaskName = "Execute $scriptFile" }
   $TaskDescription = "Run script $ScriptFullName"
@@ -213,10 +214,10 @@ boundaries).
   $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   if (-not (Test-Path -LiteralPath $psExe)) { throw "powershell.exe not found at expected path: $psExe" }
 
-  $needsBatchWrapper  = $false
+  $needsBatchWrapper = $false
   $scriptUnsafePattern = '[\"`^&|<>()]'
-  $argUnsafePattern    = '[\s\"`^&|<>()]'
-  $rawUnsafePattern    = '[\"`^]'
+  $argUnsafePattern = '[\s\"`^&|<>()]'
+  $rawUnsafePattern = '[\"`^]'
 
   if ($ScriptFullName -match $scriptUnsafePattern) { $needsBatchWrapper = $true }
 
@@ -230,7 +231,7 @@ boundaries).
     if ($RawArgumentsAvoidMe -match $rawUnsafePattern) { $needsBatchWrapper = $true }
   }
 
-  $Action    = $null
+  $Action = $null
   $batchPath = $null
 
   if ($needsBatchWrapper) {
@@ -243,38 +244,40 @@ boundaries).
       }
       $argLiteral = '@(' + ($escapedArgs -join ',') + ')'
       $code = "& '$escapedScript' $argLiteral"
-    } elseif ($RawArgumentsAvoidMe) {
+    }
+    elseif ($RawArgumentsAvoidMe) {
       $code = "& '$escapedScript' $RawArgumentsAvoidMe"
-    } else {
+    }
+    else {
       $code = "& '$escapedScript'"
     }
 
     $bytes = [System.Text.Encoding]::Unicode.GetBytes($code)
-    $enc   = [Convert]::ToBase64String($bytes)
+    $enc = [Convert]::ToBase64String($bytes)
 
     $batchBase = "{0}-{1}-task" -f $baseName, $ScheduleType
     $batchName = "$batchBase.cmd"
     $batchPath = Join-Path $scriptFolder $batchName
-    $counter   = 1
+    $counter = 1
     while (Test-Path -LiteralPath $batchPath) {
       $batchName = "{0}-{1}-task-{2}.cmd" -f $baseName, $ScheduleType, $counter
       $batchPath = Join-Path $scriptFolder $batchName
       $counter++
     }
 
-    $singleLineCode = $code -replace '(\r?\n)+','; '
+    $singleLineCode = $code -replace '(\r?\n)+', '; '
     $decodeHint = "[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('$enc'))"
 
     $batchContent =
-      "@echo off`r`n" +
-      "REM Auto-generated by New-ScheduledTaskForPSScript`r`n" +
-      "REM Decoded PowerShell command:`r`n" +
-      "REM   $singleLineCode`r`n" +
-      "REM To decode the Base64 payload in PowerShell, run:`r`n" +
-      "REM   $decodeHint`r`n" +
-      '"' + $psExe + '"' +
-      " -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand " +
-      $enc + "`r`n"
+    "@echo off`r`n" +
+    "REM Auto-generated by New-ScheduledTaskForPSScript`r`n" +
+    "REM Decoded PowerShell command:`r`n" +
+    "REM   $singleLineCode`r`n" +
+    "REM To decode the Base64 payload in PowerShell, run:`r`n" +
+    "REM   $decodeHint`r`n" +
+    '"' + $psExe + '"' +
+    " -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand " +
+    $enc + "`r`n"
 
     try { [System.IO.File]::WriteAllText($batchPath, $batchContent, [System.Text.Encoding]::ASCII) }
     catch { throw "Failed to create batch wrapper '$batchPath'. Error: $_" }
@@ -282,7 +285,7 @@ boundaries).
     $Action = New-ScheduledTaskAction -Execute $batchPath -ErrorAction Stop
   }
   else {
-    $argParts = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$ScriptFullName)
+    $argParts = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptFullName)
     if ($ScriptArguments) { $argParts += $ScriptArguments }
     elseif ($RawArgumentsAvoidMe) { $argParts += $RawArgumentsAvoidMe }
   
@@ -299,20 +302,20 @@ boundaries).
   $Trigger = $null
   switch ($ScheduleType) {
     'Startup' { $Trigger = New-ScheduledTaskTrigger -AtStartup }
-    'Daily'   { $Trigger = New-ScheduledTaskTrigger -Daily  -At $Time }
-    'Weekly'  { $Trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Day -At $Time }
+    'Daily' { $Trigger = New-ScheduledTaskTrigger -Daily  -At $Time }
+    'Weekly' { $Trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Day -At $Time }
     'Hourly' {
-      $start   = (Get-Date).AddMinutes(1)
+      $start = (Get-Date).AddMinutes(1)
       $Trigger = New-ScheduledTaskTrigger -Once -At $start -RepetitionInterval (New-TimeSpan -Hours 1)
-      $Trigger.Repetition.Duration = [TimeSpan]::Zero
     }
     'EveryMinute' {
-      $start   = (Get-Date).AddMinutes(1)
+      $start = (Get-Date).AddMinutes(1)
       $Trigger = New-ScheduledTaskTrigger -Once -At $start -RepetitionInterval (New-TimeSpan -Minutes 1)
-      $Trigger.Repetition.Duration = [TimeSpan]::Zero
     }
     'Manual' { $Trigger = $null }
   }
+  # Note that in all repeating cases above we don't define $Trigger.Repetition.Duration 
+  # so that the task repeats forever
 
   $Principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 
@@ -338,9 +341,10 @@ boundaries).
 
   if (-not $PSCmdlet.ShouldProcess($targetDisplay, 'Register scheduled task')) { return }
 
-  try{
+  try {
     $registerParams | Format-Table | Out-String | Write-Host -ForegroundColor DarkGray
-  } catch {
+  }
+  catch {
     Write-Verbose ($registerParams | Out-String)
   }
   $task = Register-ScheduledTask @registerParams -ErrorAction Stop
@@ -361,7 +365,8 @@ boundaries).
     try {
       Start-ScheduledTask -TaskPath $taskPathWithSlash -TaskName $TaskName
       Write-Host "Task started immediately." -ForegroundColor Cyan
-    } catch {
+    }
+    catch {
       Write-Error "Task '$taskPathWithSlash$TaskName' was created but failed to start. Error: $_"
     }
   }
@@ -375,7 +380,7 @@ boundaries).
 
 
 function Invoke-DetachedPSScript {
-<#
+  <#
 .SYNOPSIS
 Executes a PowerShell script on a remote host as a detached process
 without leaving a disconnected session after execution completes.
@@ -394,156 +399,165 @@ Produces a PSCustomObject representing the process start result:
   ExecutionPath : The path to the script being executed on the target.
 }
 #>
-    [CmdletBinding(DefaultParameterSetName='FilePath')]
-    param(
-        [Parameter(Mandatory=$true)]
-        [ValidateNotNullOrEmpty()]
-        [string]$Computer,
+  [CmdletBinding(DefaultParameterSetName = 'FilePath')]
+  param(
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$Computer,
 
-        [Parameter(Mandatory=$true, ParameterSetName='FilePath')]
-        [ValidateNotNullOrEmpty()]
-        [string]$Script,
+    [Parameter(Mandatory = $true, ParameterSetName = 'FilePath')]
+    [ValidateNotNullOrEmpty()]
+    [string]$Script,
 
-        [Parameter(Mandatory=$true, ParameterSetName='ScriptBlock')]
-        [ValidateNotNull()]
-        [scriptblock]$ScriptBlock,
+    [Parameter(Mandatory = $true, ParameterSetName = 'ScriptBlock')]
+    [ValidateNotNull()]
+    [scriptblock]$ScriptBlock,
 
-        [string]$LogFile
-    )
+    [string]$LogFile
+  )
 
-    $wmiReturnCodes = @{
-        0  = "Successful completion"
-        2  = "Access denied"
-        3  = "Insufficient privilege"
-        8  = "Unknown failure"
-        9  = "Path not found"
-        21 = "Invalid parameter"
+  $wmiReturnCodes = @{
+    0  = "Successful completion"
+    2  = "Access denied"
+    3  = "Insufficient privilege"
+    8  = "Unknown failure"
+    9  = "Path not found"
+    21 = "Invalid parameter"
+  }
+
+  $localNames = @('localhost', '127.0.0.1', '::1', $env:COMPUTERNAME, [System.Net.Dns]::GetHostName())
+  if ($localNames -contains $Computer) {
+    throw "Invoke-DetachedPSScript is intended for remote hosts. Skipping local machine: $Computer"
+  }
+
+  $tempFilePrefix = "InvokeDetachedPSScript_AutoGenerated_"
+  $localTempFileToCleanup = $null
+
+  # --- STEP 1: Determine Script Paths & Generate Temp File if Needed ---
+  if ($PSCmdlet.ParameterSetName -eq 'ScriptBlock') {
+    $uniqueId = [guid]::NewGuid().ToString()
+    $tempFileName = "$tempFilePrefix$uniqueId.ps1"
+        
+    $localScriptPath = Join-Path $env:TEMP $tempFileName
+    $localTempFileToCleanup = $localScriptPath
+        
+    Write-Verbose "Writing ScriptBlock to local temp file: $localScriptPath"
+    $ScriptBlock.ToString() | Out-File -FilePath $localScriptPath -Encoding UTF8 -Force
+  }
+  else {
+    $localScriptPath = (Resolve-Path -LiteralPath $Script -ErrorAction Stop).ProviderPath
+  }
+
+  # --- STEP 2: Pre-check, Cleanup, and Copy via PSSession ---
+  $psSession = $null
+  try {
+    Write-Verbose "Establishing PSSession to $Computer for cleanup and file transfer..."
+    $psSession = New-PSSession -ComputerName $Computer -ErrorAction Stop
+        
+    Write-Verbose "Running cleanup job for old temporary script files..."
+    Invoke-Command -Session $psSession -ScriptBlock {
+      $prefix = $using:tempFilePrefix
+      $targetDir = $env:TEMP
+      $cutoffTime = (Get-Date).AddHours(-24)
+            
+      Get-ChildItem -Path $targetDir -Filter "$prefix*.ps1" -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.LastWriteTime -lt $cutoffTime } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
     }
 
-    $localNames = @('localhost', '127.0.0.1', '::1', $env:COMPUTERNAME, [System.Net.Dns]::GetHostName())
-    if ($localNames -contains $Computer) {
-        throw "Invoke-DetachedPSScript is intended for remote hosts. Skipping local machine: $Computer"
-    }
-
-    $tempFilePrefix = "InvokeDetachedPSScript_AutoGenerated_"
-    $localTempFileToCleanup = $null
-
-    # --- STEP 1: Determine Script Paths & Generate Temp File if Needed ---
     if ($PSCmdlet.ParameterSetName -eq 'ScriptBlock') {
-        $uniqueId = [guid]::NewGuid().ToString()
-        $tempFileName = "$tempFilePrefix$uniqueId.ps1"
-        
-        $localScriptPath = Join-Path $env:TEMP $tempFileName
-        $localTempFileToCleanup = $localScriptPath
-        
-        Write-Verbose "Writing ScriptBlock to local temp file: $localScriptPath"
-        $ScriptBlock.ToString() | Out-File -FilePath $localScriptPath -Encoding UTF8 -Force
-    } else {
-        $localScriptPath = (Resolve-Path -LiteralPath $Script -ErrorAction Stop).ProviderPath
+      $remoteTempDir = Invoke-Command -Session $psSession -ScriptBlock { $env:TEMP }
+      $remoteScriptPath = Join-Path $remoteTempDir $tempFileName
+    }
+    else {
+      $remoteScriptPath = $localScriptPath
     }
 
-    # --- STEP 2: Pre-check, Cleanup, and Copy via PSSession ---
-    $psSession = $null
-    try {
-        Write-Verbose "Establishing PSSession to $Computer for cleanup and file transfer..."
-        $psSession = New-PSSession -ComputerName $Computer -ErrorAction Stop
+    $fileExists = Invoke-Command -Session $psSession -ScriptBlock { Test-Path -LiteralPath $using:remoteScriptPath }
         
-        Write-Verbose "Running cleanup job for old temporary script files..."
-        Invoke-Command -Session $psSession -ScriptBlock {
-            $prefix = $using:tempFilePrefix
-            $targetDir = $env:TEMP
-            $cutoffTime = (Get-Date).AddHours(-24)
+    if (-not $fileExists) {
+      Write-Verbose "Script not found on target. Copying to $remoteScriptPath..."
+      $remoteDir = Split-Path -Path $remoteScriptPath -Parent
             
-            Get-ChildItem -Path $targetDir -Filter "$prefix*.ps1" -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.LastWriteTime -lt $cutoffTime } |
-                Remove-Item -Force -ErrorAction SilentlyContinue
+      Invoke-Command -Session $psSession -ScriptBlock {
+        if (-not (Test-Path -LiteralPath $using:remoteDir)) {
+          New-Item -ItemType Directory -Path $using:remoteDir -Force | Out-Null
         }
+      }
+            
+      Copy-Item -Path $localScriptPath -Destination $remoteScriptPath -ToSession $psSession -ErrorAction Stop
+    }
+    else {
+      Write-Verbose "Script already exists on remote machine."
+    }
+  }
+  catch {
+    throw "Failed during remote file operations (cleanup/copy) on $Computer : $_"
+  }
+  finally {
+    if ($null -ne $psSession) { Remove-PSSession $psSession -ErrorAction SilentlyContinue }
+        
+    if ($localTempFileToCleanup -and (Test-Path $localTempFileToCleanup)) {
+      Write-Verbose "Cleaning up local temporary file: $localTempFileToCleanup"
+      Remove-Item -Path $localTempFileToCleanup -Force -ErrorAction SilentlyContinue
+    }
+  }
 
-        if ($PSCmdlet.ParameterSetName -eq 'ScriptBlock') {
-            $remoteTempDir = Invoke-Command -Session $psSession -ScriptBlock { $env:TEMP }
-            $remoteScriptPath = Join-Path $remoteTempDir $tempFileName
-        } else {
-            $remoteScriptPath = $localScriptPath
-        }
+  # --- STEP 3: Execute as Detached Process via CIM/WMI ---
+  $cimSession = $null
+  try {
+    Write-Verbose "Establishing CIM session to execute process on $Computer"
+    $cimSession = New-CimSession -ComputerName $Computer -ErrorAction Stop
 
-        $fileExists = Invoke-Command -Session $psSession -ScriptBlock { Test-Path -LiteralPath $using:remoteScriptPath }
-        
-        if (-not $fileExists) {
-            Write-Verbose "Script not found on target. Copying to $remoteScriptPath..."
-            $remoteDir = Split-Path -Path $remoteScriptPath -Parent
-            
-            Invoke-Command -Session $psSession -ScriptBlock {
-                if (-not (Test-Path -LiteralPath $using:remoteDir)) {
-                    New-Item -ItemType Directory -Path $using:remoteDir -Force | Out-Null
-                }
-            }
-            
-            Copy-Item -Path $localScriptPath -Destination $remoteScriptPath -ToSession $psSession -ErrorAction Stop
-        } else {
-            Write-Verbose "Script already exists on remote machine."
-        }
-    } catch {
-        throw "Failed during remote file operations (cleanup/copy) on $Computer : $_"
-    } finally {
-        if ($null -ne $psSession) { Remove-PSSession $psSession -ErrorAction SilentlyContinue }
-        
-        if ($localTempFileToCleanup -and (Test-Path $localTempFileToCleanup)) {
-            Write-Verbose "Cleaning up local temporary file: $localTempFileToCleanup"
-            Remove-Item -Path $localTempFileToCleanup -Force -ErrorAction SilentlyContinue
-        }
+    $psPath = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+    # Using Start/Stop-Transcript via -Command
+    if ([string]::IsNullOrWhiteSpace($LogFile)) {
+      $cmd = "`"$psPath`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$remoteScriptPath`""
+    }
+    else {
+      $cmd = "`"$psPath`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"Start-Transcript -Path '$LogFile' -Append -Force; try { & '$remoteScriptPath' } finally { Stop-Transcript }`""
     }
 
-    # --- STEP 3: Execute as Detached Process via CIM/WMI ---
-    $cimSession = $null
-    try {
-        Write-Verbose "Establishing CIM session to execute process on $Computer"
-        $cimSession = New-CimSession -ComputerName $Computer -ErrorAction Stop
-
-        $psPath = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-
-        # Using Start/Stop-Transcript via -Command
-        if ([string]::IsNullOrWhiteSpace($LogFile)) {
-            $cmd = "`"$psPath`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$remoteScriptPath`""
-        } else {
-            $cmd = "`"$psPath`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"Start-Transcript -Path '$LogFile' -Append -Force; try { & '$remoteScriptPath' } finally { Stop-Transcript }`""
-        }
-
-        Write-Verbose "Executing command via WMI: $cmd"
-        $r = Invoke-CimMethod -CimSession $cimSession -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd } -ErrorAction Stop
+    Write-Verbose "Executing command via WMI: $cmd"
+    $r = Invoke-CimMethod -CimSession $cimSession -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd } -ErrorAction Stop
         
-        if ($r.ReturnValue -ne 0) {
-            $reason = if ($wmiReturnCodes.ContainsKey([int]$r.ReturnValue)) { $wmiReturnCodes[[int]$r.ReturnValue] } else { "Unknown WMI Error" }
-            throw "Process creation failed. ReturnValue=$($r.ReturnValue) ($reason)."
-        } elseif (-not $r.ProcessId) {
-            throw "Process creation failed. No ProcessId was returned by WMI."
-        }
-
-        [pscustomobject]@{
-            ComputerName  = $Computer
-            ProcessId     = $r.ProcessId
-            ReturnValue   = $r.ReturnValue
-            Status        = "Success"
-            ExecutionPath = $remoteScriptPath
-        }
-
-    } catch {
-        Write-Error "Failed to execute detached process on $Computer : $_"
-    } finally {
-        if ($null -ne $cimSession) { Remove-CimSession $cimSession -ErrorAction SilentlyContinue }
+    if ($r.ReturnValue -ne 0) {
+      $reason = if ($wmiReturnCodes.ContainsKey([int]$r.ReturnValue)) { $wmiReturnCodes[[int]$r.ReturnValue] } else { "Unknown WMI Error" }
+      throw "Process creation failed. ReturnValue=$($r.ReturnValue) ($reason)."
     }
+    elseif (-not $r.ProcessId) {
+      throw "Process creation failed. No ProcessId was returned by WMI."
+    }
+
+    [pscustomobject]@{
+      ComputerName  = $Computer
+      ProcessId     = $r.ProcessId
+      ReturnValue   = $r.ReturnValue
+      Status        = "Success"
+      ExecutionPath = $remoteScriptPath
+    }
+
+  }
+  catch {
+    Write-Error "Failed to execute detached process on $Computer : $_"
+  }
+  finally {
+    if ($null -ne $cimSession) { Remove-CimSession $cimSession -ErrorAction SilentlyContinue }
+  }
 }
 
 function Get-ProcessesWithMatchingCommandLine($likeExpression) {
-<#
+  <#
 .DESCRIPTION
 List processes with command lines matching a like expression (e.g. "*myScript.ps1*")
 .EXAMPLE
 Get-ProcessesWithMatchingCommandLine "*myScript.ps1*" 
 #>
-    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" `
-        |Sort-Object CreationDate `
-        |Select-Object ProcessId,CreationDate,CommandLine `
-        |?{$_.commandline -like $likeExpression}
+  Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" `
+  | Sort-Object CreationDate `
+  | Select-Object ProcessId, CreationDate, CommandLine `
+  | Where-Object { $_.commandline -like $likeExpression }
 }
 
 <#
@@ -561,30 +575,30 @@ Get-ProcessesWithMatchingCommandLine "*myScript.ps1*"
 function Test-ExeFound {
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory,Position=0)][string]$Exe
+    [Parameter(Mandatory, Position = 0)][string]$Exe
   )
 
-  if([string]::IsNullOrWhiteSpace($Exe)){ return $false }
+  if ([string]::IsNullOrWhiteSpace($Exe)) { return $false }
   $x = $Exe.Trim()
 
-  if([IO.Path]::IsPathRooted($x)){
-    if(Test-Path -LiteralPath $x){ return $true }
+  if ([IO.Path]::IsPathRooted($x)) {
+    if (Test-Path -LiteralPath $x) { return $true }
     $ext = [IO.Path]::GetExtension($x)
-    if([string]::IsNullOrWhiteSpace($ext)){
-      foreach($e in @('.exe','.cmd','.bat','.com')){
-        if(Test-Path -LiteralPath ($x + $e)){ return $true }
+    if ([string]::IsNullOrWhiteSpace($ext)) {
+      foreach ($e in @('.exe', '.cmd', '.bat', '.com')) {
+        if (Test-Path -LiteralPath ($x + $e)) { return $true }
       }
     }
     return $false
   }
 
   $c = Get-Command -Name $x -CommandType 'Application' -ErrorAction SilentlyContinue
-  if($c){ return $true }
+  if ($c) { return $true }
 
   $pathext = ($env:PATHEXT -split ';' | Where-Object { $_ } | ForEach-Object { $_.Trim() })
-  if($x -match '\.'){ return $false }
-  foreach($e in $pathext){
-    if(Get-Command -Name ($x + $e) -ErrorAction SilentlyContinue){ return $true }
+  if ($x -match '\.') { return $false }
+  foreach ($e in $pathext) {
+    if (Get-Command -Name ($x + $e) -ErrorAction SilentlyContinue) { return $true }
   }
   return $false
 

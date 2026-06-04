@@ -298,10 +298,26 @@ data are skipped. Substitutions are evaluated sequentially.
     if($hasBom -and $text.Length -gt 0 -and $text[0] -eq [char]0xFEFF){ $text = $text.Substring(1) }
 
     $newText = $text
+    $replaceError = $null
 
     # Iterate sequentially through our normalized queue of replacements
-    foreach ($replacementSpec in $compiledReplacements) {
-      $newText = $replacementSpec.Regex.Replace($newText, $replacementSpec.Replacement)
+    foreach ($pat in $replacementsToProcess.Keys) {
+      $rep = $replacementsToProcess[$pat]
+      $effectivePattern = if($Literal){ [regex]::Escape($pat) } else { $pat }
+      
+      try { 
+        $rx = [regex]::new($effectivePattern)
+        $newText = $rx.Replace($newText, $rep)
+      }
+      catch {
+        $replaceError = "Invalid regex or replace failed on pattern '$pat': " + $_.Exception.Message
+        break # Break out of the replacement loop early on failure
+      }
+    }
+
+    if ($null -ne $replaceError) {
+      [pscustomobject]@{ File=$resolved; Changed=$false; EncodingStr=$encWritten; EncodingObj=$EncodingObj; Details=$replaceError }
+      continue
     }
 
     if($newText -ceq $text){
@@ -1169,12 +1185,12 @@ error when building the hashtable.
                 $res1 = Edit-TextFile -File $target -ReplaceMap $batch1 `
 					-Literal -Backup $activeBackup -MaxFileSize $MaxFileSize `
 					-PreferISOEncodings:$PreferISOEncodings
-                if ($res1.Changed) { $activeBackup = "" } 
+                if ($res1.Changed) { $activeBackup = "" }
 
                 $res2 = Edit-TextFile -File $target -ReplaceMap $batch2 `
 					-Literal -Backup $activeBackup -MaxFileSize $MaxFileSize `
 					-PreferISOEncodings:$PreferISOEncodings
-                if ($res2.Changed) { $activeBackup = "" } 
+                if ($res2.Changed) { $activeBackup = "" }
 
                 $res3 = Edit-TextFile -File $target -ReplaceMap $batch3 `
 					-Literal -Backup $activeBackup -MaxFileSize $MaxFileSize `
