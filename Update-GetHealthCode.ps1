@@ -33,11 +33,24 @@ Use `X.Y.Z` or `vX.Y.Z`.
 Overides the default which is to cache latest-release metadata locally
 for a few minutes (to avoid querying GitHub on every run).
 
+.PARAMETER Config
+Hashtable or PowerShell data file path for customized installs. `Options.InstallDir`
+sets the install root; `ConfigFiles` writes named .psd1 files under the config folder.
+
 .PARAMETER SelfRerunCount
 Internal use only. Tracks the one-time self-rerun pass count.
 
 .PARAMETER PersistReleaseMarker
 Internal use only. Carries the resolved release marker across self-rerun.
+
+.PARAMETER Config
+Optional installer customization. Pass either a hashtable or the path to a PowerShell data file.
+The top-level Options branch changes installer behavior. The top-level ConfigFiles branch
+creates PowerShell data files under the installation config directory.
+
+.PARAMETER GenerateConfigPsd1
+Creates a template PowerShell data file named GetComputerHealth.install.psd1 in the current
+working directory, then exits. Customize that file and pass its path to -Config.
 
 .EXAMPLE
 .\Update-GetHealthCode.ps1
@@ -56,19 +69,162 @@ param(
   [string]$UpdateFromZip,
   [string]$Version,
   [switch]$ForceRefreshReleaseMetadata,
+  [object]$Config,
+  [switch]$GenerateConfigPsd1,
   [Parameter(DontShow=$true)][int]$SelfRerunCount = 0,
   [Parameter(DontShow=$true)][string]$PersistReleaseMarker
 )
+
+
+function Get-EarlyGchInstallConfigSection {
+  param(
+    [AllowNull()]$ConfigObject,
+    [Parameter(Mandatory)][string]$Key
+  )
+
+  if ($null -eq $ConfigObject) { return $null }
+  if ($ConfigObject -is [hashtable]) {
+    if ($ConfigObject.ContainsKey($Key)) { return $ConfigObject[$Key] }
+    return $null
+  }
+  if ($ConfigObject.PSObject.Properties[$Key]) { return $ConfigObject.$Key }
+  return $null
+}
+
+function Resolve-EarlyGchInstallConfig {
+  param([AllowNull()]$InputObject)
+
+  if ($null -eq $InputObject) { return $null }
+  if ($InputObject -is [string]) {
+    $configPath = [string]$InputObject
+    if ([string]::IsNullOrWhiteSpace($configPath)) { return $null }
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+      throw "Install configuration file not found: '$configPath'"
+    }
+    return (Import-PowerShellDataFile -LiteralPath $configPath -ErrorAction Stop)
+  }
+  return $InputObject
+}
+
+function Get-EarlyGchInstallConfigValue {
+  param(
+    [Parameter(Mandatory)]$ConfigObject,
+    [Parameter(Mandatory)][string]$Key
+  )
+
+  if ($ConfigObject -is [hashtable]) { return $ConfigObject[$Key] }
+  return $ConfigObject.$Key
+}
+
+function ConvertTo-EarlyGchPsd1KeyLiteral {
+  param([Parameter(Mandatory)][string]$Key)
+
+  if ($Key -match '^[A-Za-z_][A-Za-z0-9_]*$') { return $Key }
+  return ("'{0}'" -f ($Key -replace "'", "''"))
+}
+
+function ConvertTo-EarlyGchPsd1Literal {
+  param(
+    [AllowNull()]$Value,
+    [int]$Indent = 0
+  )
+
+  $spaces = ''.PadLeft($Indent)
+  $childIndent = $Indent + 4
+  $childSpaces = ''.PadLeft($childIndent)
+
+  if ($null -eq $Value) { return '$null' }
+  if ($Value -is [bool]) {
+    if ($Value) { return '$true' }
+    return '$false'
+  }
+  if ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) { return ([string]$Value) }
+  if ($Value -is [System.Collections.IDictionary]) {
+    $lines = @('@{')
+    foreach ($key in @($Value.Keys | Sort-Object)) {
+      $keyText = ConvertTo-EarlyGchPsd1KeyLiteral -Key ([string]$key)
+      $valueText = ConvertTo-EarlyGchPsd1Literal -Value $Value[$key] -Indent $childIndent
+      $lines += ('{0}{1} = {2}' -f $childSpaces, $keyText, $valueText)
+    }
+    $lines += ($spaces + '}')
+    return ($lines -join [Environment]::NewLine)
+  }
+  if (($Value -is [System.Collections.IEnumerable]) -and (-not ($Value -is [string]))) {
+    $items = @($Value)
+    if ($items.Count -eq 0) { return '@()' }
+    $itemTexts = @()
+    foreach ($item in $items) { $itemTexts += (ConvertTo-EarlyGchPsd1Literal -Value $item -Indent $childIndent) }
+    return ('@({0}{1}{0})' -f [Environment]::NewLine, (($itemTexts | ForEach-Object { $childSpaces + $_ }) -join (',' + [Environment]::NewLine)))
+  }
+  return ("'{0}'" -f (([string]$Value) -replace "'", "''"))
+}
+
+function ConvertTo-EarlyGchPsd1Text {
+  param([Parameter(Mandatory)]$Value)
+  (ConvertTo-EarlyGchPsd1Literal -Value $Value -Indent 0) + [Environment]::NewLine
+}
+
+function Write-EarlyGchTextFileUtf8NoBom {
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [Parameter(Mandatory)][string]$Text
+  )
+
+  $dir = Split-Path -Parent $Path
+  if ($dir -and (-not (Test-Path -LiteralPath $dir -PathType Container))) {
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  }
+  $enc = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Text, $enc)
+}
+
+function Write-EarlyGchCustomConfigFiles {
+  param(
+    [AllowNull()]$InstallConfig,
+    [Parameter(Mandatory)][string]$ConfigDir
+  )
+
+  $configFiles = Get-EarlyGchInstallConfigSection -ConfigObject $InstallConfig -Key 'ConfigFiles'
+  if ($null -eq $configFiles) { return }
+  if (-not ($configFiles -is [System.Collections.IDictionary])) {
+    throw 'ConfigFiles must be a hashtable whose keys are config file names.'
+  }
+  if (-not (Test-Path -LiteralPath $ConfigDir -PathType Container)) {
+    New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
+  }
+  foreach ($name in @($configFiles.Keys | Sort-Object)) {
+    $fileName = [string]$name
+    if ([string]::IsNullOrWhiteSpace($fileName)) { throw 'ConfigFiles contains an empty config file name.' }
+    if ($fileName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0 -or $fileName -match '[\\/]') {
+      throw "ConfigFiles file name '$fileName' must be a simple file name."
+    }
+    $path = Join-Path $ConfigDir $fileName
+    Write-EarlyGchTextFileUtf8NoBom -Path $path -Text (ConvertTo-EarlyGchPsd1Text -Value $configFiles[$name])
+  }
+}
+
 
 ####################################################################
 #
 #  START OF CONFIG
 #
+$script:InstallConfig = Resolve-EarlyGchInstallConfig -InputObject $Config
 $SCRIPT_BIN_DIR = (Resolve-Path -LiteralPath $PSScriptRoot).Path
-if ((Split-Path -Leaf $SCRIPT_BIN_DIR) -ine 'bin') {
-  throw "Refusing to run. Update-GetHealthCode.ps1 must be located in and executed from a 'bin' folder. Current script location: '$SCRIPT_BIN_DIR'."
+$installOptions = Get-EarlyGchInstallConfigSection -ConfigObject $script:InstallConfig -Key 'Options'
+if ($installOptions -and ((($installOptions -is [hashtable]) -and $installOptions.ContainsKey('InstallDir')) -or ($installOptions.PSObject.Properties['InstallDir']))) {
+  $installDir = [string](Get-EarlyGchInstallConfigValue -ConfigObject $installOptions -Key 'InstallDir')
+  if ([string]::IsNullOrWhiteSpace($installDir)) {
+    throw 'Config.Options.InstallDir cannot be empty.'
+  }
+  $ROOT_DIR = [System.IO.Path]::GetFullPath($installDir)
+  $SCRIPT_BIN_DIR = Join-Path $ROOT_DIR 'bin'
 }
-$ROOT_DIR = Split-Path -Parent $SCRIPT_BIN_DIR
+elseif ((Split-Path -Leaf $SCRIPT_BIN_DIR) -ine 'bin') {
+  throw "Refusing to run. Update-GetHealthCode.ps1 must be located in and executed from a 'bin' folder unless -Config @{ Options = @{ InstallDir = ... } } is provided. Current script location: '$SCRIPT_BIN_DIR'."
+}
+else {
+  $ROOT_DIR = Split-Path -Parent $SCRIPT_BIN_DIR
+}
 
 $DEST_DIR = $SCRIPT_BIN_DIR
 $BAK_DIR  = Join-Path $ROOT_DIR 'temp'
@@ -81,8 +237,8 @@ $script:UpdateTranscriptTimestamp = (Get-Date)
 $REPO_URL = 'https://github.com/ndemou/GetComputerHealth'
 $SHOW_AS_POSTPONED_WINDOW_DAYS = 150
 $REPO_REF = 'main'
-$GCH_CONFIG_PATH = Join-Path $CFG_DIR 'gch.psd1'
-$LATEST_RELEASE_METADATA_CACHE_PATH = Join-Path $CFG_DIR 'Get-ComputerHealth-latest-release-meta.json'
+$GCH_CONFIG_PATH = $null
+$LATEST_RELEASE_METADATA_CACHE_PATH = $null
 $RELEASE_METADATA_CACHE_TTL_MINUTES = 60
 $ZIP_CACHE_PATTERN = 'GetComputerHealth-release-*.zip'
 $MANUAL_ZIP_CACHE_PATTERN = 'GetComputerHealth-MANUAL-UPDATE-*.zip'
@@ -102,6 +258,209 @@ function Write-UpdateEvent {
 
   if ([string]::IsNullOrWhiteSpace($Message)) { return }
   Write-Host $Message
+}
+
+
+function ConvertTo-GchHashtable {
+  [CmdletBinding()]
+  param([AllowNull()]$Value)
+
+  if ($null -eq $Value) {
+    return @{}
+  }
+
+  if ($Value -is [hashtable]) {
+    return $Value
+  }
+
+  if ($Value -is [string]) {
+    $path = [System.IO.Path]::GetFullPath($Value)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "Configuration file '$path' does not exist."
+    }
+
+    try {
+      $loadedConfig = Import-PowerShellDataFile -LiteralPath $path -ErrorAction Stop
+    } catch {
+      throw "Failed reading configuration file '$path': $($_.Exception.Message)"
+    }
+
+    if ($null -eq $loadedConfig) {
+      return @{}
+    }
+
+    if ($loadedConfig -isnot [hashtable]) {
+      throw "Configuration file '$path' must contain a top-level hashtable."
+    }
+
+    return $loadedConfig
+  }
+
+  throw "-Config must be a hashtable or the path to a PowerShell data file."
+}
+
+function Get-GchInstallConfigTemplateText {
+  [CmdletBinding()]
+  param()
+
+  @'
+@{
+    Options = @{
+        # Installation root. Scripts are installed under the bin subfolder.
+        InstallDir = 'C:\IT\GetComputerHealth'
+    }
+    ConfigFiles = @{
+        'Send-Message.psd1' = @{
+            Server = 'smtp.contoso.com'
+            From   = 'SERVER01+alerts@contoso.com'
+            To     = 'ops@contoso.com;admin@contoso.com'
+        }
+        'gch.psd1' = @{
+            AutomaticUpdates = $false
+            SendReports = 'Auto' # 'Never', 'Always', 'Auto'
+            ShowAsPostponedWindowDays = 15
+            IpsOfAllDCs = @('10.1.2.3', '10.1.2.4')
+        }
+    }
+}
+'@
+}
+
+function Write-GchInstallConfigTemplate {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Path)
+
+  $fullPath = [System.IO.Path]::GetFullPath($Path)
+  $parentDir = Split-Path -Parent $fullPath
+  if (-not [string]::IsNullOrWhiteSpace($parentDir) -and (-not (Test-Path -LiteralPath $parentDir -PathType Container))) {
+    $null = New-Item -ItemType Directory -Path $parentDir -Force
+  }
+
+  Set-Content -LiteralPath $fullPath -Value (Get-GchInstallConfigTemplateText) -Encoding UTF8
+  return $fullPath
+}
+
+function Get-GchInstallOption {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]$InstallConfig,
+    [Parameter(Mandatory)][string]$Name
+  )
+
+  if (-not (Test-GchConfigKey -Config $InstallConfig -Key 'Options')) {
+    return $null
+  }
+
+  $options = Get-GchConfigValue -Config $InstallConfig -Key 'Options'
+  if ($null -eq $options) {
+    return $null
+  }
+
+  if (-not (Test-GchConfigKey -Config $options -Key $Name)) {
+    return $null
+  }
+
+  return (Get-GchConfigValue -Config $options -Key $Name)
+}
+
+function ConvertTo-GchPsd1Literal {
+  [CmdletBinding()]
+  param(
+    [AllowNull()]$Value,
+    [int]$Indent = 0
+  )
+
+  if ($null -eq $Value) {
+    return '$null'
+  }
+
+  if ($Value -is [bool]) {
+    if ($Value) { return '$true' }
+    return '$false'
+  }
+
+  if ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+    return ([string]$Value)
+  }
+
+  if ($Value -is [string]) {
+    return ("'{0}'" -f ($Value -replace "'", "''"))
+  }
+
+  if ($Value -is [hashtable]) {
+    $lines = @('@{')
+    foreach ($key in $Value.Keys) {
+      $keyText = [string]$key
+      $safeKey = if ($keyText -match '^[A-Za-z_][A-Za-z0-9_]*$') { $keyText } else { "'{0}'" -f ($keyText -replace "'", "''") }
+      $child = ConvertTo-GchPsd1Literal -Value $Value[$key] -Indent ($Indent + 4)
+      $lines += (' ' * ($Indent + 4)) + $safeKey + ' = ' + $child
+    }
+    $lines += (' ' * $Indent) + '}'
+    return ($lines -join "`r`n")
+  }
+
+  if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+    $items = @()
+    foreach ($item in $Value) {
+      $items += (ConvertTo-GchPsd1Literal -Value $item -Indent $Indent)
+    }
+    return ('@(' + ($items -join ', ') + ')')
+  }
+
+  return ("'{0}'" -f (([string]$Value) -replace "'", "''"))
+}
+
+function ConvertTo-GchPsd1Text {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][hashtable]$Data)
+
+  return (ConvertTo-GchPsd1Literal -Value $Data -Indent 0) + "`r`n"
+}
+
+function Write-GchConfigFilesFromInstallConfig {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]$InstallConfig,
+    [Parameter(Mandatory)][string]$ConfigDirectory
+  )
+
+  if (-not (Test-GchConfigKey -Config $InstallConfig -Key 'ConfigFiles')) {
+    return
+  }
+
+  $configFiles = Get-GchConfigValue -Config $InstallConfig -Key 'ConfigFiles'
+  if ($null -eq $configFiles) {
+    return
+  }
+
+  if ($configFiles -isnot [hashtable]) {
+    throw "The ConfigFiles branch in -Config must be a hashtable."
+  }
+
+  if (-not (Test-Path -LiteralPath $ConfigDirectory -PathType Container)) {
+    $null = New-Item -ItemType Directory -Path $ConfigDirectory -Force
+  }
+
+  foreach ($fileNameObject in $configFiles.Keys) {
+    $fileName = [string]$fileNameObject
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+      throw "ConfigFiles contains an empty file name."
+    }
+    if ([System.IO.Path]::IsPathRooted($fileName) -or $fileName.Contains('..') -or $fileName.Contains('\') -or $fileName.Contains('/')) {
+      throw "ConfigFiles entry '$fileName' is invalid. Use only a file name such as 'gch.psd1'."
+    }
+    if (-not $fileName.EndsWith('.psd1', [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "ConfigFiles entry '$fileName' is invalid. Configuration file names must end with .psd1."
+    }
+    if ($configFiles[$fileNameObject] -isnot [hashtable]) {
+      throw "ConfigFiles entry '$fileName' must contain a hashtable."
+    }
+
+    $targetPath = Join-Path $ConfigDirectory $fileName
+    $text = ConvertTo-GchPsd1Text -Data $configFiles[$fileNameObject]
+    Set-Content -LiteralPath $targetPath -Value $text -Encoding UTF8
+    Write-UpdateEvent "Wrote configuration file '$targetPath'"
+  }
 }
 
 function Get-GchDefaultConfigText {
@@ -1713,14 +2072,40 @@ available.
 #
 #  MAIN CODE
 #
+$installConfig = ConvertTo-GchHashtable -Value $Config
+if ($GenerateConfigPsd1) {
+  $templatePath = Join-Path (Get-Location).Path 'GetComputerHealth.install.psd1'
+  $writtenTemplatePath = Write-GchInstallConfigTemplate -Path $templatePath
+  Write-UpdateEvent "Wrote installer configuration template '$writtenTemplatePath'"
+  return
+}
+
+$configuredInstallDir = Get-GchInstallOption -InstallConfig $installConfig -Name 'InstallDir'
+if (-not [string]::IsNullOrWhiteSpace([string]$configuredInstallDir)) {
+  $ROOT_DIR = [System.IO.Path]::GetFullPath([string]$configuredInstallDir).TrimEnd('\','/')
+  $DEST_DIR = Join-Path $ROOT_DIR 'bin'
+  $SCRIPT_BIN_DIR = $DEST_DIR
+} elseif ((Split-Path -Leaf $SCRIPT_BIN_DIR) -ieq 'bin') {
+  $ROOT_DIR = Split-Path -Parent $SCRIPT_BIN_DIR
+  $DEST_DIR = $SCRIPT_BIN_DIR
+} else {
+  throw "Refusing to run. Update-GetHealthCode.ps1 must be located in and executed from a 'bin' folder unless -Config Options.InstallDir is supplied. Current script location: '$SCRIPT_BIN_DIR'."
+}
+
+$BAK_DIR  = Join-Path $ROOT_DIR 'temp'
+$CFG_DIR  = Join-Path $ROOT_DIR 'config'
+$LOG_DIR  = Join-Path $ROOT_DIR 'log'
+$GCH_CONFIG_PATH = Join-Path $CFG_DIR 'gch.psd1'
+$LATEST_RELEASE_METADATA_CACHE_PATH = Join-Path $CFG_DIR 'Get-ComputerHealth-latest-release-meta.json'
+
 Start-UpdateTranscript
 try {
   $passNumber = $SelfRerunCount + 1
   $passLabel = "[pass $passNumber/2]"
 
   Write-Verbose "$passLabel Starting Update-GetHealthCode"
-  Write-Verbose "$passLabel Parameters: Reinstall=$Reinstall UpdateFromZip='$UpdateFromZip' Version='$Version' ForceRefreshReleaseMetadata=$ForceRefreshReleaseMetadata SelfRerunCount=$SelfRerunCount PersistReleaseMarker='$PersistReleaseMarker'"
-  Write-UpdateEvent "$passLabel Parameters: Reinstall=$Reinstall UpdateFromZip='$UpdateFromZip' Version='$Version' ForceRefreshReleaseMetadata=$ForceRefreshReleaseMetadata SelfRerunCount=$SelfRerunCount PersistReleaseMarker='$PersistReleaseMarker'"
+  Write-Verbose "$passLabel Parameters: Reinstall=$Reinstall UpdateFromZip='$UpdateFromZip' Version='$Version' ForceRefreshReleaseMetadata=$ForceRefreshReleaseMetadata ConfigSupplied=$($null -ne $Config) SelfRerunCount=$SelfRerunCount PersistReleaseMarker='$PersistReleaseMarker'"
+  Write-UpdateEvent "$passLabel Parameters: Reinstall=$Reinstall UpdateFromZip='$UpdateFromZip' Version='$Version' ForceRefreshReleaseMetadata=$ForceRefreshReleaseMetadata ConfigSupplied=$($null -ne $Config) SelfRerunCount=$SelfRerunCount PersistReleaseMarker='$PersistReleaseMarker'"
   if (-not (Test-Path $DEST_DIR)) {
     Write-Verbose "Creating destination directory '$DEST_DIR'"
     New-Item -ItemType Directory -Path $DEST_DIR | Out-Null
@@ -1742,9 +2127,10 @@ try {
     Write-Verbose "Configuration directory already exists: '$CFG_DIR'"
   }
 
+  Write-GchConfigFilesFromInstallConfig -InstallConfig $installConfig -ConfigDirectory $CFG_DIR
   Ensure-GchConfigFile -Path $GCH_CONFIG_PATH -RepoUrl $REPO_URL -ShowAsPostponedWindowDays $SHOW_AS_POSTPONED_WINDOW_DAYS
   $gchConfig = Read-GchConfigFile -Path $GCH_CONFIG_PATH
-  if ((Test-GchConfigKey -Config $gchConfig -Key 'AutomaticUpdates') -and (Test-GchFalsyValue -Value (Get-GchConfigValue -Config $gchConfig -Key 'AutomaticUpdates'))) {
+  if (($null -eq $Config) -and (Test-GchConfigKey -Config $gchConfig -Key 'AutomaticUpdates') -and (Test-GchFalsyValue -Value (Get-GchConfigValue -Config $gchConfig -Key 'AutomaticUpdates'))) {
     Write-Warning "Automatic updates are disabled by '$GCH_CONFIG_PATH'. Update-GetHealthCode.ps1 will not make changes."
     return
   }
@@ -1769,8 +2155,6 @@ try {
   Write-Verbose "  ZIP_CACHE_PATTERN           : $ZIP_CACHE_PATTERN"
   Write-Verbose "  MANUAL_ZIP_CACHE_PATTERN    : $MANUAL_ZIP_CACHE_PATTERN"
   Write-Verbose "  repoSlug                    : $repoSlug"
-
-  Ensure-PSModuleInstalled -Name ImportExcel
 
   $p = Join-Path $CFG_DIR 'Get-ComputerHealth.sigs-to-suppress.txt'
   if (-not (Test-Path $p)) {
@@ -1899,14 +2283,19 @@ try {
     $currentUpdaterPath = Get-NormalizedFileSystemPath -Path $PSCommandPath
     $migrationUpdaterPath = Get-NormalizedFileSystemPath -Path ([string]$diskFormatMigration.UpdaterPath)
     if ($migrationUpdaterPath -ine $currentUpdaterPath) {
+      $expectedDestinationUpdaterPath = Get-NormalizedFileSystemPath -Path (Join-Path $DEST_DIR 'Update-GetHealthCode.ps1')
       if (-not (Test-Path -LiteralPath $migrationUpdaterPath -PathType Leaf)) {
-        throw "Disk format migration returned updater path '$migrationUpdaterPath', but that file does not exist."
+        if ($migrationUpdaterPath -ieq $expectedDestinationUpdaterPath) {
+          Write-Verbose "$passLabel Disk format migration returned destination updater path '$migrationUpdaterPath' before that file was staged; continuing with normal update flow."
+        } else {
+          throw "Disk format migration returned updater path '$migrationUpdaterPath', but that file does not exist."
+        }
+      } else {
+        Write-Verbose "$passLabel Running updater returned by disk format migration: '$migrationUpdaterPath'"
+        Stop-UpdateTranscript
+        & $migrationUpdaterPath @PSBoundParameters
+        return
       }
-
-      Write-Verbose "$passLabel Running updater returned by disk format migration: '$migrationUpdaterPath'"
-      Stop-UpdateTranscript
-      & $migrationUpdaterPath @PSBoundParameters
-      return
     }
   }
 
