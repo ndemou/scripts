@@ -1,4 +1,4 @@
-<# 
+﻿<# 
 .SYNOPSIS
     Safe* and automatic DISM + SFC repairs made easy.
 

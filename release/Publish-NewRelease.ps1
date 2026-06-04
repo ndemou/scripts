@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Runs all local tests and rebuilds index.html when they pass.
 

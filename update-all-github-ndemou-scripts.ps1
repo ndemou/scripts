@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Ensures all ndemou.github.io/scripts are up-to-date.
 

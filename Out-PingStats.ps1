@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Continuously pings a host, or a small set of public hosts, and displays live connection-quality statistics.
 

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Shows a compact, admin-friendly timeline of recent boots, shutdowns,
 crashes, and update-related restart signals from the System log.

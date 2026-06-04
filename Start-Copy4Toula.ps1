@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Minimize copy-pasting and typing while using an LLM like Toula-the-fixer to troubleshoot issues.
 

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Ensures all health-check scripts and PS Modules are installed & up-to-date.
 

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Runs focused regression tests for Edit-TextFile.
 

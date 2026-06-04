@@ -1,4 +1,4 @@
-function Clear-DiskJunk {
+﻿function Clear-DiskJunk {
 <#
 .SYNOPSIS
 Deletes selected junk files and directories from a copied disk tree, with conservative defaults and full WhatIf/Confirm support.

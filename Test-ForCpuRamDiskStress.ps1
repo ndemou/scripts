@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Prints a detailed warning every time it finds RAM, CPU or Disks are stressed
 

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Installs Windows Updates using the supported WUA COM API, with optional download, controlled reboot (now or scheduled), and detailed logging.
 

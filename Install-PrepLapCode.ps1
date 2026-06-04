@@ -1,4 +1,4 @@
-<#
+﻿<#
 Only relevant to mazars (Install/Update mazars-prepare-laptop-code)
 #>
 
