@@ -22,14 +22,29 @@ In log analysis mode these arguments may be used.
 .EXAMPLE
 Download & Setup to always run on startup
 ```
-$bin="C:\IT\bin";$log="C:\it\log"
-$f="Test-ForCpuRamDiskStress.ps1";mkdir $bin -force >$null;mkdir $log -force > $null
-iwr -useb https://ndemou.github.io/scripts/$f -OutFile $bin\$f
+$dir="C:\IT\bin";$f="Test-ForCpuRamDiskStress.ps1"
+if (-not (test-path $dir\$f)) {
+  "Downloading"; mkdir $dir -force >$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f
+}
+if (-not (Get-ScheduledTask -TaskPath '\enLogic\' -TaskName 'Execute Test-ForCpuRamDiskStress.ps1' -ErrorAction SilentlyContinue)) {
+  $dir="C:\IT\bin";$f="helpers-processes.ps1";mkdir $dir -force >$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f
+  . $dir\$f
+  "Setting up scheduled task on startup"
+  New-ScheduledTaskForPSScript -ScriptPath 'C:\IT\bin\Test-ForCpuRamDiskStress.ps1' `
+    -ScheduleType Startup -TaskPath '\enLogic\' `
+    -ScriptArguments @('-LogDir','c:\it\log','-LogBaseName','CpuRamDiskStress')
+  "Starting task"
+  Start-ScheduledTask -TaskPath '\enLogic\' -TaskName 'Execute Test-ForCpuRamDiskStress.ps1'
+  sleep 2
+  Get-ScheduledTask -TaskPath '\enLogic\' -TaskName 'Execute Test-ForCpuRamDiskStress.ps1'  
+}
 
-$f="helpers-processes.ps1"; iwr -useb https://ndemou.github.io/scripts/$f -OutFile $bin\$f; . $bin\$f
-New-ScheduledTaskForPSScript -ScriptPath "$bin\Test-ForCpuRamDiskStress.ps1" -ScheduleType Startup -ScriptArguments "-LogDir",$log
-Start-ScheduledTask -TaskPath '\enLogic\' -TaskName 'Execute Test-ForCpuRamDiskStress.ps1'
+if (test-path C:\it\log\CpuRamDiskStress.*) {
+  "Last 20 lines of latest log file"
+  cat (ls C:\it\log\CpuRamDiskStress.*|sort -Property LastWriteTime|select -last 1) | select -last 20
+} else { echo "ERROR: No logs found: C:\it\log\CpuRamDiskStress.*" }
 ```
+
 .EXAMPLE
 # Get statistics for a particular date
 & $bin\Test-ForCpuRamDiskStress.ps1 -Granularity 10m -LogFile C:\it\log\CpuRamDiskStress.2026-01-14.log
