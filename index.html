@@ -180,12 +180,151 @@
           <a class="script-link" href="helpers-networking.ps1">helpers-networking.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;helpers-networking.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for helpers-networking.ps1" aria-label="Copy download command for helpers-networking.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
+          <p class="script-synopsis">A collection of helper functions for Networking</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <div class="function-panel">
+          <div class="function-entry">
+            <p class="function-name"><strong>Test-IpReachability</strong></p>
+            <p class="function-synopsis">Probe point-in-time ICMP reachability for one or more IP targets.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Sends one or more ICMP echo attempts to each target and returns one output<br>object per unique target IP.</p>
+              <p class="script-details-text">When a ping attempt cannot be performed due to an internal runtime error,<br>the target result&#x27;s lastStatus is set to a string beginning with<br>&quot;PROGRAM EXCEPTION:&quot;.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>[pscustomobject]<br>One object per unique target IP with properties:<br>- ip (string): The target IP string as provided/normalized.<br>- responded (bool): $true if any attempt succeeded; otherwise $false.<br>- attempts (int): Number of attempts made for that target.<br>- respondedOnAttempt (Nullable[int]): Attempt number of first success;<br>otherwise $null.<br>- rttMs (Nullable[long]): Round-trip time in milliseconds for the<br>successful response; otherwise $null.<br>- lastStatus (string): Final status observed for the target. For runtime<br>errors, begins with &quot;PROGRAM EXCEPTION:&quot;.</p>
+              <p class="script-details-text">.PARAMETER Ip<br>One or more target IPs to probe.</p>
+              <p class="script-details-text">Accepts:<br>- A single value convertible to string.<br>- An enumerable of values convertible to string.<br>- A single string containing multiple targets separated by commas and/or<br>whitespace.</p>
+              <p class="script-details-text">.PARAMETER Retry<br>Number of additional attempts per target after the first attempt.</p>
+              <p class="script-details-text">.PARAMETER TimeoutMs<br>Timeout in milliseconds for each attempt.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Test-IpReachability -Ip &#x27;10.1.11.50,10.1.11.55 10.1.11.56&#x27; `<br>-Retry 1 -TimeoutMs 500 -Verbose</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Test-TcpPort</strong></p>
+            <p class="function-synopsis">Quickly tests whether a TCP connection can be established.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Tests TCP connectivity from the current machine to the specified target<br>and ports, and returns one result object per requested port.</p>
+              <p class="script-details-text">The target MAY be specified as an IP address or a hostname. If name<br>resolution fails, the function throws a terminating error.</p>
+              <p class="script-details-text">Ports are accepted in multiple input forms.</p>
+              <p class="script-details-text">The -TimeoutMs value is a single overall time budget (in milliseconds) for<br>the entire batch of ports, not a per-port timeout.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>System.Management.Automation.PSCustomObject</p>
+              <p class="script-details-text">One object per normalized port, with these properties:<br>- port   (int)    The TCP port tested.<br>- open   (bool)   $true if a connection was established; otherwise $false.<br>- detail (string) &quot;connected&quot; on success; otherwise an error identifier<br>or &quot;timeout&quot; if the overall time budget was reached.</p>
+              <p class="script-details-text">Objects are emitted in ascending port order.</p>
+              <p class="script-details-text">.PARAMETER Target<br>Target host to test.</p>
+              <p class="script-details-text">.PARAMETER Ports<br>Ports to test. Accepts:<br>- a single integer<br>- an array of integers<br>- a string containing one or more port numbers<br>- an enumerable of values convertible to integers</p>
+              <p class="script-details-text">.PARAMETER TimeoutMs<br>Overall time budget for the entire batch, in milliseconds. Defaults to<br>200. When the budget is exhausted, remaining ports are reported as<br>&quot;timeout&quot;.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Test-TcpPort -Target &#x27;10.1.11.1&#x27; -Ports 80,443,4444</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Test-TcpPort -Target &#x27;google.com&#x27; -Ports &#x27;80,443,4444&#x27; `<br>-TimeoutMs 1000</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Test-NetConnectivityToHost</strong></p>
+            <p class="function-synopsis">Test-NetConnectivityToHost validates that basic network reachability to a target host matches an explicit expectation profile. What it checks - ICMP echo (ping): verifies whether the host responds to pings or not. - TCP ports (optional): - OpenPorts: ports that are expected to accept a TCP connection. - ClosedPorts: ports that are expected to refuse or time out (treated as CLOSED/FILTERED). Output / side effects - Outputs discrepancies using Write-Warning &quot;[&lt;level&gt;] &lt;message&gt;&quot; (&lt;level&gt; can be pass or failure). - If -ReturnTrueFalse is used, the function returns $true/$false and emits no warnings. Notes / interpretation - A TCP port is considered OPEN only if a TCP connect completes successfully within the timeout window. - A TCP port is considered CLOSED/FILTERED if the connect fails or does not complete within the timeout. - If OpenPorts/ClosedPorts are omitted, only the ping expectation is validated. - If -SkipPing is used, only port expectations are validated. - If -HostFriendlyName is passed, it is used to refer to the host in all messages. Example Test-NetConnectivityToHost -TargetHost 10.30.0.2 -RespondsToPing:$true -OpenPorts @(53,88,135,389,445) -ClosedPorts @(22,3389) -PortTimeoutMs 1000 Example (ports only) Test-NetConnectivityToHost -TargetHost 10.30.0.2 -SkipPing -OpenPorts @(443) -PortTimeoutMs 1000 Example (boolean result only) Test-NetConnectivityToHost -TargetHost 10.30.0.2 -RespondsToPing:$true -ReturnTrueFalse</p>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Split-IpByReachability</strong></p>
+            <p class="function-synopsis">Splits input IPs into Alive vs NotAlive based on whether they respond to pings</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Runs Test-IpReachability for the provided targets and returns a single object<br>containing two string arrays:<br>- AliveIps: IPs that responded ($true)<br>- DeadIps:  IPs that did not respond ($false) or hit errors/timeouts</p>
+              <p class="script-details-text"><span class="detail-directive">.INPUTS</span><br>Same accepted shapes as Test-IpReachability -Ip.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>[pscustomobject] with:<br>- AliveIps ([string[]])<br>- DeadIps  ([string[]])<br>- Results  ([pscustomobject[]]) raw per-IP results (handy for lastStatus/rtt)</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Test-NetConnectivityToNetwork</strong></p>
+            <p class="function-synopsis">Assesses reachability of a network by pinging a list of hosts that are known to reply.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Given a human-friendly network description (e.g. &quot;10.11.x.y/16&quot;) and a list of<br>IP addresses that are expected to respond to ICMP, this function probes them<br>(using Split-IpByReachability) and outputs the results using:<br>Write-Warning &quot;[&lt;level&gt;] ...&quot;<br>(&lt;level&gt; is one of pass, notice, failure)</p>
+              <p class="script-details-text">If -ReturnListOfAliveHosts is used, the function does not emit warnings and<br>instead returns the list of responsive hosts.</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Test-ShareLikelyUp</strong></p>
+            <p class="function-synopsis">QUICKLY tests whether the host of a UNC share is LIKELY reachable over SMB.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">This is a FAST reachability test, not a definitive share-access test. A positive result means the host likely has SMB available. It does not prove that the share exists or that the current user has access to it.</p>
+              <p class="script-details-text">Optionally verifies that at least one configured DNS server falls within an expected CIDR range (prefer to pass it so that you don&#x27;t spend time on failed DNS resolutions), resolves the host to IPv4 and/or IPv6 addresses, and tests whether any resolved address accepts a TCP connection on port 445 within a short timeout. Supports hostnames, IPv4 UNC hosts, and Windows IPv6-literal UNC hosts.</p>
+              <p class="script-details-text">.PARAMETER SharePath<br>UNC share path whose host will be tested.</p>
+              <p class="script-details-text">.PARAMETER DnsCidrs<br>Optional CIDR ranges. When specified, at least one configured DNS server must fall within one of these ranges or the test returns a negative result.</p>
+              <p class="script-details-text">.PARAMETER TcpTimeoutMs<br>For the connection test to TCP port 445 (SMB).</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>A PSCustomObject with the test outcome and discovered details.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Test-ShareLikelyUp -SharePath &#x27;\\server01\share&#x27;</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Test-ShareLikelyUp -SharePath &#x27;\\192.168.1.2\foo&#x27;</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Test-ShareLikelyUp -SharePath &#x27;\\server01.contoso.local\share&#x27; -DnsCidrs &#x27;10.30.0.0/16&#x27;</p>
+            </details>
+          </div>
+          </div>
+        </details>
       </li>
       <li class="script-item">
         <div class="script-header">
           <a class="script-link" href="helpers-processes.ps1">helpers-processes.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;helpers-processes.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for helpers-processes.ps1" aria-label="Copy download command for helpers-processes.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
+          <p class="script-synopsis">A collection of helper functions for Processes &amp; Tasks</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <div class="function-panel">
+          <div class="function-entry">
+            <p class="function-name"><strong>Quote-Win32Arg</strong></p>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Join-Win32CommandLine</strong></p>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>New-ScheduledTaskForPSScript</strong></p>
+            <p class="function-synopsis">Registers a Windows Scheduled Task that runs a PowerShell script as SYSTEM.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Creates or updates a scheduled task that runs the script specified by<br>-ScriptPath using Windows PowerShell (powershell.exe).</p>
+              <p class="script-details-text">The task is registered under -TaskPath and -TaskName (a default name is<br>chosen when -TaskName is not provided). If a task with the same name<br>already exists at that path, it is replaced.</p>
+              <p class="script-details-text">The task runs as the built-in SYSTEM account with highest run level. Task<br>settings limit concurrent executions by ignoring new starts while an<br>instance is already running, and apply -ExecutionTimeLimit to each run.</p>
+              <p class="script-details-text">Depending on the script path and provided arguments, the function MAY<br>create a .cmd wrapper file in the script&#x27;s folder and configure the task<br>to execute that wrapper instead of invoking powershell.exe directly.</p>
+              <p class="script-details-text">If -ScheduleType is Manual, the task is created without a trigger and<br>will only run when started manually (or by other tooling).</p>
+              <p class="script-details-text">Supports -WhatIf and -Confirm. If confirmation is declined (or -WhatIf is<br>used), no task is registered and no wrapper file is created.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Microsoft.Management.Infrastructure.CimInstance<br>A scheduled task object returned by Register-ScheduledTask when the task<br>is registered. If ShouldProcess declines the action, no output is<br>produced.</p>
+              <p class="script-details-text">.PARAMETER ScriptPath<br>Path to an existing PowerShell script file. The path MUST exist or the<br>function throws before making changes.</p>
+              <p class="script-details-text">.PARAMETER ScheduleType<br>Selects how (or whether) the task is triggered.</p>
+              <p class="script-details-text">Valid values:<br>- Startup: runs at system startup.<br>- Daily: runs daily at -Time.<br>- Weekly: runs weekly on -Day at -Time.<br>- Hourly: repeats every hour starting shortly after creation time.<br>- EveryMinute: repeats every minute starting shortly after creation time.<br>- Manual: no trigger is created.</p>
+              <p class="script-details-text">.PARAMETER Time<br>Time of day in HH:mm (24-hour) format. Required for Daily and Weekly.</p>
+              <p class="script-details-text">.PARAMETER Day<br>One or more weekdays. Required for Weekly.</p>
+              <p class="script-details-text">.PARAMETER TaskPath<br>Scheduled task folder path in Task Scheduler (for example &#x27;\enLogic\&#x27;).<br>Defaults to &#x27;\enLogic\&#x27;.</p>
+              <p class="script-details-text">.PARAMETER TaskName<br>Scheduled task name. If omitted, a name is derived from the script file<br>name.</p>
+              <p class="script-details-text">.PARAMETER ScriptArguments<br>Argument values passed to the script. Provide either -ScriptArguments or<br>-RawArgumentsAvoidMe, not both.</p>
+              <p class="script-details-text">Elements MAY be $null. How the script receives $null depends on the<br>invocation mode chosen by the function.</p>
+              <p class="script-details-text">.PARAMETER RawArgumentsAvoidMe<br>A raw argument string appended to the invocation. Intended for advanced<br>cases. Provide either -ScriptArguments or -RawArgumentsAvoidMe, not both.</p>
+              <p class="script-details-text">.PARAMETER ExecutionTimeLimit<br>Maximum runtime allowed for each task invocation. Defaults to 2 hours.</p>
+              <p class="script-details-text">.PARAMETER StartItNow<br>If set, the function attempts to start the task immediately after it is<br>registered. If starting fails, the task remains created and an error is<br>written.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>New-ScheduledTaskForPSScript -ScriptPath &#x27;C:\Ops\Health.ps1&#x27; `<br>-ScheduleType Startup -TaskPath &#x27;\enLogic\&#x27;</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>New-ScheduledTaskForPSScript -ScriptPath &#x27;C:\Ops\Report.ps1&#x27; `<br>-ScheduleType Daily -Time &#x27;02:30&#x27; -TaskName &#x27;Daily Report&#x27; `<br>-ScriptArguments @(&#x27;Full&#x27;,&#x27;EU&#x27;)</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>New-ScheduledTaskForPSScript -ScriptPath &#x27;C:\Ops\Cleanup.ps1&#x27; `<br>-ScheduleType Weekly -Day Monday,Thursday -Time &#x27;03:00&#x27; `<br>-ExecutionTimeLimit (New-TimeSpan -Minutes 30) -StartItNow</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>New-ScheduledTaskForPSScript -ScriptPath &#x27;C:\Ops\OnDemand.ps1&#x27; `<br>-ScheduleType Manual -TaskName &#x27;Run On Demand&#x27;</p>
+              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>Registers the task to run as SYSTEM with highest privileges, and sets<br>MultipleInstances to IgnoreNew.</p>
+              <p class="script-details-text">For Hourly and EveryMinute schedules, the first run is anchored to a<br>start time shortly after the function is invoked (not aligned to clock<br>boundaries).</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Invoke-DetachedPSScript</strong></p>
+            <p class="function-synopsis">Executes a PowerShell script on a remote host as a detached process without leaving a disconnected session after execution completes.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">The script or script block is executed on the remote host. Unlike<br>`Invoke-Command -InDisconnectedSession` once the execution terminates<br>it does not leave a disconnected session on the target.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Produces a PSCustomObject representing the process start result:<br>ComputerName  : The target host name.<br>ProcessId     : The ID of the newly created remote process.<br>ReturnValue   : The system code from the process creation attempt.<br>Status        : The outcome of the initiation (e.g., &quot;Success&quot;).<br>ExecutionPath : The path to the script being executed on the target.</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Get-ProcessesWithMatchingCommandLine</strong></p>
+            <p class="function-synopsis">.DESCRIPTION List processes with command lines matching a like expression (e.g. &quot;*myScript.ps1*&quot;) .EXAMPLE Get-ProcessesWithMatchingCommandLine &quot;*myScript.ps1*&quot;</p>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Test-ExeFound</strong></p>
+          </div>
+          </div>
+        </details>
       </li>
       <li class="script-item">
         <div class="script-header">

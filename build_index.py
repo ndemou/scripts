@@ -44,7 +44,7 @@ class FunctionDoc:
 def normalize_comment_lines(lines: list[str]) -> list[str]:
     normalized: list[str] = []
     for line in lines:
-        text = line.rstrip()
+        text = strip_utf8_bom(line.rstrip())
         if text.startswith("#"):
             text = text[1:]
             if text.startswith(" "):
@@ -60,6 +60,10 @@ def normalize_comment_lines(lines: list[str]) -> list[str]:
         for line in normalized
         if not re.match(r"^\s*[^A-Za-z0-9]+\s*$", line)
     ]
+    while normalized and not normalized[0].strip():
+        normalized.pop(0)
+    while normalized and not normalized[-1].strip():
+        normalized.pop()
     return normalized
 
 
@@ -119,7 +123,7 @@ def extract_comment_block(text: str, extension: str) -> list[str]:
         block = []
         while index < len(lines):
             current = lines[index]
-            current_stripped = current.strip()
+            current_stripped = strip_utf8_bom(current.strip())
             if current_stripped.startswith("#") and not current_stripped.startswith("#!"):
                 block.append(current)
                 index += 1

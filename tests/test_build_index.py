@@ -18,10 +18,34 @@ class BuildIndexTests(unittest.TestCase):
             ],
         )
 
+    def test_extract_comment_block_accepts_utf8_bom_prefixed_ps1_banner(self) -> None:
+        text = (
+            "\ufeff##############################################################\n"
+            "#\n"
+            "# A collection of helper functions for Networking\n"
+            "#\n"
+            "##############################################################\n"
+        )
+
+        comment_lines = build_index.extract_comment_block(text, ".ps1")
+
+        self.assertEqual(
+            comment_lines,
+            ["A collection of helper functions for Networking"],
+        )
+
     def test_read_script_doc_extracts_bom_prefixed_helpers_file_docs(self) -> None:
         doc = build_index.read_script_doc(Path("helpers-files.ps1"))
 
         self.assertEqual(doc.synopsis, "A collection of helper functions for handling files")
+        self.assertIsNone(doc.details)
+        self.assertIsNotNone(doc.function_docs)
+        self.assertGreater(len(doc.function_docs), 0)
+
+    def test_read_script_doc_extracts_bom_prefixed_banner_helpers_file_docs(self) -> None:
+        doc = build_index.read_script_doc(Path("helpers-networking.ps1"))
+
+        self.assertEqual(doc.synopsis, "A collection of helper functions for Networking")
         self.assertIsNone(doc.details)
         self.assertIsNotNone(doc.function_docs)
         self.assertGreater(len(doc.function_docs), 0)
