@@ -72,6 +72,56 @@ class BuildIndexTests(unittest.TestCase):
             ".PARAMETER Disk Disk device ID, for example C:.",
         )
 
+    def test_cleanup_details_strips_leading_inline_description_directive(self) -> None:
+        details = ".DESCRIPTION Popular properties: FreeSpace, Size, VolumeName, DriveType"
+
+        cleaned = build_index.cleanup_details(details)
+
+        self.assertEqual(cleaned, "Popular properties: FreeSpace, Size, VolumeName, DriveType")
+
+    def test_extract_function_docs_uses_description_when_synopsis_is_missing(self) -> None:
+        text = """function Get-ProcessesWithMatchingCommandLine($likeExpression) {
+  <#
+.DESCRIPTION
+List processes with command lines matching a like expression (e.g. "*myScript.ps1*")
+.EXAMPLE
+Get-ProcessesWithMatchingCommandLine "*myScript.ps1*"
+#>
+}
+"""
+
+        docs = build_index.extract_function_docs(text)
+
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0].name, "Get-ProcessesWithMatchingCommandLine")
+        self.assertEqual(
+            docs[0].synopsis,
+            'List processes with command lines matching a like expression (e.g. "*myScript.ps1*")',
+        )
+        self.assertEqual(
+            docs[0].details,
+            '.EXAMPLE\nGet-ProcessesWithMatchingCommandLine "*myScript.ps1*"',
+        )
+
+    def test_extract_function_docs_handles_help_block_above_function(self) -> None:
+        text = """<#
+.DESCRIPTION
+Quotes a string so it can be safely passed as a single argument.
+#>
+function Quote-Win32Arg([string]$s) {
+}
+"""
+
+        docs = build_index.extract_function_docs(text)
+
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0].name, "Quote-Win32Arg")
+        self.assertEqual(
+            docs[0].synopsis,
+            "Quotes a string so it can be safely passed as a single argument.",
+        )
+        self.assertIsNone(docs[0].details)
+
 
 if __name__ == "__main__":
     unittest.main()

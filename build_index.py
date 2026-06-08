@@ -152,6 +152,30 @@ def extract_synopsis(comment_lines: list[str]) -> tuple[str | None, str | None]:
             break
 
     if synopsis_index is None:
+        for i, line in enumerate(comment_lines):
+            description_match = DESCRIPTION_DIRECTIVE_RE.match(line)
+            if not description_match:
+                continue
+
+            synopsis_lines: list[str] = []
+            description_inline = (description_match.group("rest") or "").strip()
+            if description_inline:
+                synopsis_lines.append(description_inline)
+
+            j = i + 1
+            while j < len(comment_lines):
+                if HELP_DIRECTIVE_RE.match(comment_lines[j]):
+                    break
+                synopsis_lines.append(comment_lines[j])
+                j += 1
+
+            details_lines = comment_lines[:i]
+            details_lines.extend(comment_lines[j:])
+            synopsis = "\n".join(synopsis_lines).strip() or None
+            details = "\n".join(details_lines).strip() or None
+            return synopsis, details
+
+    if synopsis_index is None:
         text = "\n".join(comment_lines).strip()
         return (text or None), None
 
@@ -177,7 +201,13 @@ def cleanup_details(details: str | None) -> str | None:
     if not details:
         return None
 
-    lines = details.splitlines()
+    cleaned_details = details.strip()
+    inline_match = DESCRIPTION_DIRECTIVE_RE.match(cleaned_details)
+    if inline_match:
+        remainder = (inline_match.group("rest") or "").strip()
+        cleaned_details = remainder
+
+    lines = cleaned_details.splitlines()
     while lines and not lines[0].strip():
         lines.pop(0)
     if lines:
@@ -218,6 +248,7 @@ def extract_function_docs(text: str) -> list[FunctionDoc]:
     i = 0
     block_comment = False
     brace_depth = 0
+    pending_comment_lines: list[str] | None = None
 
     while i < len(lines):
         line = lines[i]
@@ -230,13 +261,28 @@ def extract_function_docs(text: str) -> list[FunctionDoc]:
             continue
 
         if stripped.startswith("<#"):
+            block: list[str] = [line]
             if "#>" not in line:
-                block_comment = True
+                j = i + 1
+                while j < len(lines):
+                    block.append(lines[j])
+                    if "#>" in lines[j]:
+                        break
+                    j += 1
+                i = j
+            if brace_depth == 0:
+                pending_comment_lines = strip_block_comment_markers(block)
             i += 1
             continue
         if stripped.startswith("#"):
             i += 1
             continue
+        if not stripped:
+            i += 1
+            continue
+
+        if brace_depth == 0 and pending_comment_lines and not FUNCTION_NAME_RE.match(line):
+            pending_comment_lines = None
 
         match = FUNCTION_NAME_RE.match(line) if brace_depth == 0 else None
 
@@ -264,8 +310,12 @@ def extract_function_docs(text: str) -> list[FunctionDoc]:
                 comment_lines = strip_block_comment_markers(block)
                 synopsis, details = extract_synopsis(comment_lines)
                 details = cleanup_details(details)
+            elif pending_comment_lines:
+                synopsis, details = extract_synopsis(pending_comment_lines)
+                details = cleanup_details(details)
 
             docs.append(FunctionDoc(name=name, synopsis=synopsis, details=details))
+            pending_comment_lines = None
 
         brace_depth += line.count("{") - line.count("}")
         if brace_depth < 0:

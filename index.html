@@ -271,9 +271,17 @@
           <div class="function-panel">
           <div class="function-entry">
             <p class="function-name"><strong>Quote-Win32Arg</strong></p>
+            <p class="function-synopsis">Quotes a string so it can be safely passed as a single argument to a Windows process via CreateProcess, following the exact Win32 command-line parsing rules. It ensures arguments containing spaces, quotes, or trailing backslashes are preserved exactly as intended when reconstructed by the target program. &#x27;simple&#x27;				=&gt; simple &#x27;hello world&#x27;			=&gt; &quot;hello world&quot; &#x27;He said &quot;hello&quot;&#x27;		=&gt; &quot;He said \&quot;hello\&quot;&quot; &#x27;C:\Temp\&#x27;				=&gt; &quot;C:\Temp\\&quot; &#x27;C:\Path With Spaces\&#x27;	=&gt; &quot;C:\Path With Spaces\\&quot; &#x27;C:\X\&quot;Y&quot;\Z\&#x27;			=&gt; &quot;C:\X\\\&quot;Y\\\&quot;\Z\\&quot;</p>
           </div>
           <div class="function-entry">
             <p class="function-name"><strong>Join-Win32CommandLine</strong></p>
+            <p class="function-synopsis">Constructs a valid Win32 command-line string from a list of arguments.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Iterates through a collection of arguments, applies Win32 escaping to each (via Quote-Win32Arg), and joins them with spaces. This creates a single string safe for use with APIs like System.Diagnostics.Process or CreateProcess.</p>
+              <p class="script-details-text">[&#x27;git&#x27;, &#x27;commit&#x27;, &#x27;-m&#x27;, &#x27;Msg&#x27;]           =&gt; git commit -m Msg<br>[&#x27;app.exe&#x27;, &#x27;C:\Program Files\&#x27;, &#x27;/v&#x27;]   =&gt; app.exe &quot;C:\Program Files\\&quot; /v<br>[&#x27;echo&#x27;, &#x27;&#x27;, &#x27;foo&#x27;]                      =&gt; echo &quot;&quot; foo</p>
+              <p class="script-details-text">.PARAMETER ArgumentList<br>The collection of objects (strings) to be joined. Objects are converted to strings before quoting.</p>
+            </details>
           </div>
           <div class="function-entry">
             <p class="function-name"><strong>New-ScheduledTaskForPSScript</strong></p>
@@ -318,10 +326,19 @@
           </div>
           <div class="function-entry">
             <p class="function-name"><strong>Get-ProcessesWithMatchingCommandLine</strong></p>
-            <p class="function-synopsis">.DESCRIPTION List processes with command lines matching a like expression (e.g. &quot;*myScript.ps1*&quot;) .EXAMPLE Get-ProcessesWithMatchingCommandLine &quot;*myScript.ps1*&quot;</p>
+            <p class="function-synopsis">List processes with command lines matching a like expression (e.g. &quot;*myScript.ps1*&quot;)</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-ProcessesWithMatchingCommandLine &quot;*myScript.ps1*&quot;</p>
+            </details>
           </div>
           <div class="function-entry">
             <p class="function-name"><strong>Test-ExeFound</strong></p>
+            <p class="function-synopsis">Tests whether an executable can be resolved either as a full path or via PATH/PATHEXT.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Accepts either:<br>- A rooted path (e.g. C:\Tools\uchardet or C:\Tools\uchardet.exe), in which case it checks existence and,<br>if no extension was given, also tries common executable extensions (.exe/.cmd/.bat/.com).<br>- A bare command name (e.g. uchardet), in which case it resolves it the same way PowerShell would when<br>launching a process (Get-Command + PATHEXT).<br>Returns $true if the executable can be found, otherwise $false.</p>
+            </details>
           </div>
           </div>
         </details>
