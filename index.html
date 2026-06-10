@@ -185,6 +185,46 @@
           <summary>Read more</summary>
           <div class="function-panel">
           <div class="function-entry">
+            <p class="function-name"><strong>Get-RemoteIpOnLowListeningTcpPort</strong></p>
+            <p class="function-synopsis">Lists remote IPs observed on local listening TCP ports.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Produces one psCustomObject per remote IP:<br>RemoteAddress   : The remote IP address.<br>LocalPorts      : The local listening port or ports observed.<br>States          : The TCP state or states observed.<br>ConnectionCount : The number of matching TCP connection rows.</p>
+              <p class="script-details-text"><span class="detail-directive">.DESCRIPTION</span><br>Reports remote IPs that currently have, or still have visible closed TCP<br>rows for, non-loopback local listening TCP ports below the configured<br>port limit.</p>
+              <p class="script-details-text">Use this when you need a compact connection inventory by remote IP,<br>rather than raw connection rows. The result is a point-in-time view of<br>the TCP table. Connections removed by Windows before the function runs<br>are not reported.</p>
+              <p class="script-details-text">By default, loopback, wildcard, and the server&#x27;s own IP addresses are<br>excluded from remote addresses. This avoids reporting connections from<br>the server to itself.</p>
+              <p class="script-details-text">.PARAMETER MaxListeningPortExclusive<br>Upper exclusive local listening port limit. Only listening TCP ports<br>below this value are considered.</p>
+              <p class="script-details-text">.PARAMETER States<br>TCP states to include. Use names accepted by the State property, such<br>as Established, TimeWait, CloseWait, LastAck, FinWait1, and FinWait2.</p>
+              <p class="script-details-text">.PARAMETER IncludeLocalMachineConnections<br>When set, connections whose remote address is one of the server&#x27;s own<br>IP addresses may be included. Otherwise, they are excluded.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-RemoteIpOnLowListeningTcpPort</p>
+              <p class="script-details-text">Returns one row per remote IP, with the observed local ports, observed<br>TCP states, and matching connection-row count.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-RemoteIpOnLowListeningTcpPort -Verbose</p>
+              <p class="script-details-text">Returns the same objects and writes the matched connection details to<br>the verbose stream.</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Watch-RemoteIpOnLowListeningTcpPort</strong></p>
+            <p class="function-synopsis">Watches(and logs) remote IPs observed on local listening TCP ports.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Maintains a cumulative in-session report of remote IPs that have been<br>observed on non-loopback local listening TCP ports below the configured<br>port limit.</p>
+              <p class="script-details-text">Each cycle refreshes the screen and prints the cumulative report. The<br>watch continues until interrupted, for example with Ctrl+C.</p>
+              <p class="script-details-text">The report keeps the first and last time each remote IP was observed<br>during the current watch run. Local ports and TCP states are accumulated<br>per remote IP for the life of the watch run.</p>
+              <p class="script-details-text">When SaveToFile is provided, the report is also written to that path.<br>The parent directory is created if needed. The file is overwritten with<br>the current cumulative report no more often than SaveIntervalSeconds.<br>File write errors are not suppressed.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Produces formatted text reports while the watch is running:<br>RemoteAddress : The remote IP address.<br>LocalPorts    : Local listening port or ports observed.<br>States        : TCP state or states observed.<br>FirstSeen     : First time seen during this watch run.<br>LastSeen      : Last time seen during this watch run.</p>
+              <p class="script-details-text">.PARAMETER Seconds<br>Delay between refresh cycles.</p>
+              <p class="script-details-text">.PARAMETER MaxListeningPortExclusive<br>Upper exclusive local listening port limit. Only listening TCP ports<br>below this value are considered.</p>
+              <p class="script-details-text">.PARAMETER States<br>TCP states to include. Use names accepted by the State property, such<br>as Established, TimeWait, CloseWait, LastAck, FinWait1, and FinWait2.</p>
+              <p class="script-details-text">.PARAMETER IncludeLocalMachineConnections<br>When set, connections whose remote address is one of the server&#x27;s own<br>IP addresses may be included. Otherwise, they are excluded.</p>
+              <p class="script-details-text">.PARAMETER SaveToFile<br>Path to a text file that receives the same cumulative report shown on<br>screen.</p>
+              <p class="script-details-text">.PARAMETER SaveIntervalSeconds<br>Minimum number of seconds between writes to SaveToFile.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Watch-RemoteIpOnLowListeningTcpPort</p>
+              <p class="script-details-text">Refreshes the screen every 10 seconds and shows all remote IP and local<br>port observations made since the watch started.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Watch-RemoteIpOnLowListeningTcpPort -Seconds 5 `<br>-SaveToFile C:\Temp\observed-connections.txt</p>
+              <p class="script-details-text">Refreshes the screen every 5 seconds and writes the cumulative report<br>to the file at the configured save interval.</p>
+            </details>
+          </div>
+          <div class="function-entry">
             <p class="function-name"><strong>Test-IpReachability</strong></p>
             <p class="function-synopsis">Probe point-in-time ICMP reachability for one or more IP targets.</p>
             <details class="script-details function-details">
