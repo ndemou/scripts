@@ -3,6 +3,287 @@
 # A collection of helper functions for Networking
 #
 ##############################################################
+
+
+<#
+.SYNOPSIS
+Lists remote IPs observed on local listening TCP ports.
+
+.OUTPUTS
+Produces one psCustomObject per remote IP:
+  RemoteAddress   : The remote IP address.
+  LocalPorts      : The local listening port or ports observed.
+  States          : The TCP state or states observed.
+  ConnectionCount : The number of matching TCP connection rows.
+
+.DESCRIPTION
+Reports remote IPs that currently have, or still have visible closed TCP
+rows for, non-loopback local listening TCP ports below the configured
+port limit.
+
+Use this when you need a compact connection inventory by remote IP,
+rather than raw connection rows. The result is a point-in-time view of
+the TCP table. Connections removed by Windows before the function runs
+are not reported.
+
+By default, loopback, wildcard, and the server's own IP addresses are
+excluded from remote addresses. This avoids reporting connections from
+the server to itself.
+
+.PARAMETER MaxListeningPortExclusive
+Upper exclusive local listening port limit. Only listening TCP ports
+below this value are considered.
+
+.PARAMETER States
+TCP states to include. Use names accepted by the State property, such
+as Established, TimeWait, CloseWait, LastAck, FinWait1, and FinWait2.
+
+.PARAMETER IncludeLocalMachineConnections
+When set, connections whose remote address is one of the server's own
+IP addresses may be included. Otherwise, they are excluded.
+
+.EXAMPLE
+Get-RemoteIpOnLowListeningTcpPort
+
+Returns one row per remote IP, with the observed local ports, observed
+TCP states, and matching connection-row count.
+
+.EXAMPLE
+Get-RemoteIpOnLowListeningTcpPort -Verbose
+
+Returns the same objects and writes the matched connection details to
+the verbose stream.
+#>
+function Get-RemoteIpOnLowListeningTcpPort {
+    [CmdletBinding()]
+    param(
+        [int]$MaxListeningPortExclusive = 49152,
+
+        [string[]]$States = @(
+            'Established',
+            'CloseWait',
+            'LastAck',
+            'FinWait1',
+            'FinWait2',
+            'TimeWait'
+        ),
+
+        [switch]$IncludeLocalMachineConnections
+    )
+
+    $loopbackAddresses = @('127.0.0.1', '::1')
+    $invalidRemoteAddresses = @('127.0.0.1', '::1', '0.0.0.0', '::')
+
+    $localIpAddresses = @(Get-NetIPAddress |
+        Where-Object {
+            $_.IPAddress -and
+            $_.IPAddress -notlike '169.254.*' -and
+            $_.IPAddress -ne '::'
+        } |
+        Select-Object -ExpandProperty IPAddress -Unique)
+
+    if ($IncludeLocalMachineConnections) {
+        $excludedRemoteAddresses = $invalidRemoteAddresses
+    } else {
+        $excludedRemoteAddresses = @($invalidRemoteAddresses + $localIpAddresses | Sort-Object -Unique)
+    }
+
+    Write-Verbose "Excluded remote addresses: $($excludedRemoteAddresses -join ', ')"
+
+    $externalListening = @(Get-NetTCPConnection -State Listen |
+        Where-Object {
+            $loopbackAddresses -notcontains $_.LocalAddress
+        })
+
+    $lowExternalListeningPorts = @($externalListening |
+        Select-Object -ExpandProperty LocalPort -Unique |
+        Where-Object { $_ -lt $MaxListeningPortExclusive } |
+        Sort-Object)
+
+    Write-Verbose "External listening TCP ports below $($MaxListeningPortExclusive): $($lowExternalListeningPorts -join ', ')"
+
+    if ($lowExternalListeningPorts.Count -eq 0) {
+        Write-Verbose "No matching listening ports found."
+        return
+    }
+
+    $connections = @(Get-NetTCPConnection -ErrorAction SilentlyContinue |
+        Where-Object {
+            $States -contains ([string]$_.State) -and
+            $lowExternalListeningPorts -contains $_.LocalPort -and
+            $excludedRemoteAddresses -notcontains $_.RemoteAddress
+        } |
+        Sort-Object RemoteAddress, LocalPort, State)
+
+    Write-Verbose "Matching connections found: $($connections.Count)"
+
+    foreach ($connection in $connections) {
+        Write-Verbose ("Local={0}:{1} Remote={2}:{3} State={4} PID={5}" -f `
+            $connection.LocalAddress,
+            $connection.LocalPort,
+            $connection.RemoteAddress,
+            $connection.RemotePort,
+            $connection.State,
+            $connection.OwningProcess)
+    }
+
+    $connections |
+        Group-Object RemoteAddress |
+        ForEach-Object {
+            $remoteAddress = $_.Name
+            $items = @($_.Group)
+
+            $localPorts = @($items |
+                Select-Object -ExpandProperty LocalPort -Unique |
+                Sort-Object)
+
+            $observedStates = @($items |
+                ForEach-Object { [string]$_.State } |
+                Sort-Object -Unique)
+
+            [pscustomobject]@{
+                RemoteAddress   = $remoteAddress
+                LocalPorts      = $localPorts
+                States          = $observedStates
+                ConnectionCount = $items.Count
+            }
+        } |
+        Sort-Object RemoteAddress
+}
+
+<#
+.SYNOPSIS
+Watches(and logs) remote IPs observed on local listening TCP ports.
+
+.DESCRIPTION
+Maintains a cumulative in-session report of remote IPs that have been
+observed on non-loopback local listening TCP ports below the configured
+port limit.
+
+Each cycle refreshes the screen and prints the cumulative report. The
+watch continues until interrupted, for example with Ctrl+C.
+
+The report keeps the first and last time each remote IP was observed
+during the current watch run. Local ports and TCP states are accumulated
+per remote IP for the life of the watch run.
+
+When SaveToFile is provided, the report is also written to that path.
+The parent directory is created if needed. The file is overwritten with
+the current cumulative report no more often than SaveIntervalSeconds.
+File write errors are not suppressed.
+
+.OUTPUTS
+Produces formatted text reports while the watch is running:
+  RemoteAddress : The remote IP address.
+  LocalPorts    : Local listening port or ports observed.
+  States        : TCP state or states observed.
+  FirstSeen     : First time seen during this watch run.
+  LastSeen      : Last time seen during this watch run.
+
+.PARAMETER Seconds
+Delay between refresh cycles.
+
+.PARAMETER MaxListeningPortExclusive
+Upper exclusive local listening port limit. Only listening TCP ports
+below this value are considered.
+
+.PARAMETER States
+TCP states to include. Use names accepted by the State property, such
+as Established, TimeWait, CloseWait, LastAck, FinWait1, and FinWait2.
+
+.PARAMETER IncludeLocalMachineConnections
+When set, connections whose remote address is one of the server's own
+IP addresses may be included. Otherwise, they are excluded.
+
+.PARAMETER SaveToFile
+Path to a text file that receives the same cumulative report shown on
+screen.
+
+.PARAMETER SaveIntervalSeconds
+Minimum number of seconds between writes to SaveToFile.
+
+.EXAMPLE
+Watch-RemoteIpOnLowListeningTcpPort
+
+Refreshes the screen every 10 seconds and shows all remote IP and local
+port observations made since the watch started.
+
+.EXAMPLE
+Watch-RemoteIpOnLowListeningTcpPort -Seconds 5 `
+    -SaveToFile C:\Temp\observed-connections.txt
+
+Refreshes the screen every 5 seconds and writes the cumulative report
+to the file at the configured save interval.
+#>
+function Watch-RemoteIpOnLowListeningTcpPort {
+    [CmdletBinding()]
+    param(
+        [int]$Seconds = 10,
+
+        [int]$MaxListeningPortExclusive = 49152,
+
+        [string[]]$States = @(
+            'Established',
+            'CloseWait',
+            'LastAck',
+            'FinWait1',
+            'FinWait2',
+            'TimeWait'
+        ),
+
+        [switch]$IncludeLocalMachineConnections
+    )
+
+    $observed = @{}
+
+    while ($true) {
+        $now = Get-Date
+
+        $current = @(Get-RemoteIpOnLowListeningTcpPort `
+            -MaxListeningPortExclusive $MaxListeningPortExclusive `
+            -States $States `
+            -IncludeLocalMachineConnections:$IncludeLocalMachineConnections)
+
+        foreach ($item in $current) {
+            if (-not $observed.ContainsKey($item.RemoteAddress)) {
+                $observed[$item.RemoteAddress] = [pscustomobject]@{
+                    RemoteAddress = $item.RemoteAddress
+                    LocalPorts    = @()
+                    States        = @()
+                    FirstSeen     = $now
+                    LastSeen      = $now
+                }
+            }
+
+            $entry = $observed[$item.RemoteAddress]
+
+            $entry.LocalPorts = @($entry.LocalPorts + $item.LocalPorts | Sort-Object -Unique)
+            $entry.States = @($entry.States + $item.States | Sort-Object -Unique)
+            $entry.LastSeen = $now
+        }
+
+        Clear-Host
+
+        "Observed remote IPs connected to low listening TCP ports"
+        "Since: $((@($observed.Values | Sort-Object FirstSeen | Select-Object -First 1).FirstSeen))"
+        "Now:   $now"
+        ""
+
+        $observed.Values |
+            Sort-Object RemoteAddress |
+            Select-Object `
+                RemoteAddress,
+                @{Name='LocalPorts'; Expression={ $_.LocalPorts -join ', ' }},
+                @{Name='States'; Expression={ $_.States -join ', ' }},
+                FirstSeen,
+                LastSeen |
+            Format-Table -AutoSize
+
+        Start-Sleep -Seconds $Seconds
+    }
+}
+
+
 function Test-IpReachability {
 <#
 .SYNOPSIS
