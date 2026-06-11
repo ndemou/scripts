@@ -231,10 +231,23 @@ function Watch-RemoteIpOnLowListeningTcpPort {
             'TimeWait'
         ),
 
-        [switch]$IncludeLocalMachineConnections
+        [switch]$IncludeLocalMachineConnections,
+
+        [string]$SaveToFile,
+
+        [int]$SaveIntervalSeconds = 60
     )
 
+    if ($SaveToFile) {
+        $parentDir = Split-Path -Path $SaveToFile -Parent
+        if ($parentDir -and -not (Test-Path -LiteralPath $parentDir -PathType Container)) {
+            New-Item -Path $parentDir -ItemType Directory -Force | Out-Null
+        }
+    }
+
     $observed = @{}
+    $started = Get-Date
+    $lastFileWrite = $null
 
     while ($true) {
         $now = Get-Date
@@ -256,28 +269,64 @@ function Watch-RemoteIpOnLowListeningTcpPort {
             }
 
             $entry = $observed[$item.RemoteAddress]
-
             $entry.LocalPorts = @($entry.LocalPorts + $item.LocalPorts | Sort-Object -Unique)
             $entry.States = @($entry.States + $item.States | Sort-Object -Unique)
             $entry.LastSeen = $now
         }
 
-        Clear-Host
-
-        "Observed remote IPs connected to low listening TCP ports"
-        "Since: $((@($observed.Values | Sort-Object FirstSeen | Select-Object -First 1).FirstSeen))"
-        "Now:   $now"
-        ""
-
-        $observed.Values |
+        $rows = @($observed.Values |
             Sort-Object RemoteAddress |
             Select-Object `
                 RemoteAddress,
                 @{Name='LocalPorts'; Expression={ $_.LocalPorts -join ', ' }},
                 @{Name='States'; Expression={ $_.States -join ', ' }},
                 FirstSeen,
-                LastSeen |
-            Format-Table -AutoSize
+                LastSeen)
+
+        $reportLines = @()
+        $reportLines += "Observed remote IPs connected to low listening TCP ports"
+        $reportLines += "Since: $started"
+        $reportLines += "Now:   $now"
+
+        if ($SaveToFile) {
+            $reportLines += "File:  $SaveToFile"
+            if ($lastFileWrite) {
+                $reportLines += "Last file write: $lastFileWrite"
+            } else {
+                $reportLines += "Last file write: never"
+            }
+        }
+
+        $reportLines += ""
+
+        if ($rows.Count -gt 0) {
+            $reportLines += (($rows | Format-Table -AutoSize | Out-String).TrimEnd())
+        } else {
+            $reportLines += "(none)"
+        }
+
+        $report = $reportLines -join [Environment]::NewLine
+
+        Clear-Host
+        Write-Output $report
+
+        if ($SaveToFile) {
+            $shouldWrite = $false
+
+            if (-not $lastFileWrite) {
+                $shouldWrite = $true
+            } elseif (($now - $lastFileWrite).TotalSeconds -ge $SaveIntervalSeconds) {
+                $shouldWrite = $true
+            }
+
+            if ($shouldWrite) {
+                Set-Content -LiteralPath $SaveToFile -Value $report -Encoding UTF8
+                $lastFileWrite = $now
+                Write-Verbose "Saved report to $SaveToFile"
+            } else {
+                Write-Verbose "Skipped file write; last write was $([int](($now - $lastFileWrite).TotalSeconds)) seconds ago."
+            }
+        }
 
         Start-Sleep -Seconds $Seconds
     }
