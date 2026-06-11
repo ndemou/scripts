@@ -495,7 +495,7 @@ record for the invalid or missing data.
 Invalid MAC addresses are ignored. Invalid IP addresses are ignored. Invalid
 timestamps are replaced with the current time.
 
-The importer primarily expects the current CLIXML shape:
+The importer expects the current CLIXML shape:
 
   GeneratedAt
   SeenMACs
@@ -503,9 +503,6 @@ The importer primarily expects the current CLIXML shape:
     IP
     FirstSeenTimestamp
     LastSeenTimestamp
-
-For tolerance during transition, it can also read older records that contain
-an IPs array instead of a single IP field.
 
 .OUTPUTS
 Produces a hashtable keyed by internal MAC,IP pair key. Each value is an
@@ -557,19 +554,16 @@ function Import-SeenMacFile {
             continue
         }
 
-        $firstSeenTimestamp = ConvertTo-DateTimeOrDefault -Value (Get-InventoryValue -Item $item -Name 'FirstSeenTimestamp') -DefaultValue $now
-        $lastSeenTimestamp = ConvertTo-DateTimeOrDefault -Value (Get-InventoryValue -Item $item -Name 'LastSeenTimestamp') -DefaultValue $now
+        $ipAddress = [string](Get-InventoryValue -Item $item -Name 'IP')
 
-        $ipAddress = Get-InventoryValue -Item $item -Name 'IP'
-
-        if ($null -ne $ipAddress) {
-            Add-SeenMacRecord -SeenMacs $seenMacs -MacAddress $macAddress -IPAddress ([string]$ipAddress) -FirstSeenTimestamp $firstSeenTimestamp -LastSeenTimestamp $lastSeenTimestamp
+        if (-not (Test-UnicastIPv4Address -IPAddress $ipAddress)) {
             continue
         }
 
-        foreach ($oldIpAddress in @((Get-InventoryValue -Item $item -Name 'IPs'))) {
-            Add-SeenMacRecord -SeenMacs $seenMacs -MacAddress $macAddress -IPAddress ([string]$oldIpAddress) -FirstSeenTimestamp $firstSeenTimestamp -LastSeenTimestamp $lastSeenTimestamp
-        }
+        $firstSeenTimestamp = ConvertTo-DateTimeOrDefault -Value (Get-InventoryValue -Item $item -Name 'FirstSeenTimestamp') -DefaultValue $now
+        $lastSeenTimestamp = ConvertTo-DateTimeOrDefault -Value (Get-InventoryValue -Item $item -Name 'LastSeenTimestamp') -DefaultValue $now
+
+        Add-SeenMacRecord -SeenMacs $seenMacs -MacAddress $macAddress -IPAddress $ipAddress -FirstSeenTimestamp $firstSeenTimestamp -LastSeenTimestamp $lastSeenTimestamp
     }
 
     return $seenMacs
