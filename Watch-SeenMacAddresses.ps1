@@ -10,11 +10,15 @@ It is intended for passive local-link observation. It does not scan the
 network and should not be used as proof that all devices in a VLAN were
 found.
 
-The output file is created or replaced as a PowerShell CLIXML file. The
-parent directory is created when needed. If the script stops normally or is
-interrupted, it attempts one final write. A terminating error can leave the
-latest observations not written, and may leave a temporary file beside the
-target file.
+When StateFile is supplied, the output file is created or replaced as a
+PowerShell CLIXML file. The parent directory is created when needed. If the
+script stops normally or is interrupted, it attempts one final write. A
+terminating error can leave the latest observations not written, and may
+leave a temporary file beside the target file.
+
+When StateFile is not supplied, the script only prints newly discovered
+MAC,IP pairs to the screen and keeps the in-memory inventory only for the
+current run.
 
 .OUTPUTS
 Produces no pipeline output.
@@ -28,7 +32,7 @@ Creates or updates a CLIXML file containing:
     LastSeenTimestamp  : Most recent time this MAC,IP pair was observed.
 
 .PARAMETER StateFile
-Path of the CLIXML inventory file to create or update.
+Optional path of the CLIXML inventory file to create or update. When omitted, no existing state is loaded and no state file is written.
 
 .PARAMETER PollSeconds
 Number of seconds between neighbor-cache observations.
@@ -42,10 +46,15 @@ Maximum seconds between writes while new MAC,IP pair observations exist.
 .EXAMPLE
 .\Watch-SeenMacAddresses.ps1
 
-Starts passive observation and writes to the default CLIXML path.
+Starts passive observation without loading or writing a state file.
 
 .EXAMPLE
-.\Watch-SeenMacAddresses.ps1 -PollSeconds 15 -ActiveWriteSeconds 30
+.\Watch-SeenMacAddresses.ps1 -StateFile 'C:\it\log\seen_MAC_addresses.clixml'
+
+Starts passive observation and persists observations to the specified CLIXML file.
+
+.EXAMPLE
+.\Watch-SeenMacAddresses.ps1 -StateFile 'C:\it\log\seen_MAC_addresses.clixml' -PollSeconds 15 -ActiveWriteSeconds 30
 
 Polls every 15 seconds and writes changed data at most every 30 seconds.
 #>
@@ -53,7 +62,7 @@ Polls every 15 seconds and writes changed data at most every 30 seconds.
 #requires -Version 5.1
 
 param(
-    [string]$StateFile = 'C:\it\log\seen_MAC_addresses.clixml',
+    [string]$StateFile,
     [int]$PollSeconds = 15,
     [int]$IdleWriteSeconds = 420,
     [int]$ActiveWriteSeconds = 30
@@ -675,12 +684,24 @@ if ($ActiveWriteSeconds -lt 1) {
     throw "ActiveWriteSeconds must be at least 1."
 }
 
-$seenMacs = Import-SeenMacFile -Path $StateFile
+$useStateFile = -not [string]::IsNullOrWhiteSpace($StateFile)
+
+if ($useStateFile) {
+    $seenMacs = Import-SeenMacFile -Path $StateFile
+} else {
+    $seenMacs = @{}
+}
+
 $lastWriteTimestamp = (Get-Date).AddSeconds(-$ActiveWriteSeconds)
 $newDataSinceLastWrite = $false
 
 Write-Host ("Loaded {0} existing MAC,IP entries." -f $seenMacs.Count)
-Write-Host ("Polling every {0}s. Writing to {1}" -f $PollSeconds, $StateFile)
+
+if ($useStateFile) {
+    Write-Host ("Polling every {0}s. Writing to {1}" -f $PollSeconds, $StateFile)
+} else {
+    Write-Host ("Polling every {0}s. No StateFile supplied; observations will not be written to disk." -f $PollSeconds)
+}
 
 try {
     while ($true) {
@@ -695,6 +716,9 @@ try {
             if (-not $seenMacs.ContainsKey($key)) {
                 $seenMacs[$key] = New-SeenMacRecord -MacAddress $macAddress -IPAddress $ipAddress -Timestamp $now
                 $newDataSinceLastWrite = $true
+
+                Write-Host ("{0} New MAC,IP pair: {1} {2} State={3} Interface={4}" -f $now.ToString('yyyy-MM-dd HH:mm:ss'), $macAddress, $ipAddress, [string]$entry.State, [string]$entry.InterfaceAlias)
+
                 continue
             }
 
@@ -704,17 +728,21 @@ try {
 
         $secondsSinceLastWrite = ($now - $lastWriteTimestamp).TotalSeconds
 
-        if ($newDataSinceLastWrite -and $secondsSinceLastWrite -ge $ActiveWriteSeconds) {
-            Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
-            $lastWriteTimestamp = Get-Date
-            $newDataSinceLastWrite = $false
-        } elseif ((-not $newDataSinceLastWrite) -and $secondsSinceLastWrite -ge $IdleWriteSeconds) {
-            Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
-            $lastWriteTimestamp = Get-Date
+        if ($useStateFile) {
+            if ($newDataSinceLastWrite -and $secondsSinceLastWrite -ge $ActiveWriteSeconds) {
+                Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
+                $lastWriteTimestamp = Get-Date
+                $newDataSinceLastWrite = $false
+            } elseif ((-not $newDataSinceLastWrite) -and $secondsSinceLastWrite -ge $IdleWriteSeconds) {
+                Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
+                $lastWriteTimestamp = Get-Date
+            }
         }
 
         Start-Sleep -Seconds $PollSeconds
     }
 } finally {
-    Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
+    if ($useStateFile) {
+        Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
+    }
 }
