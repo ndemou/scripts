@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-Records MAC,IP addresses observed in the local IPv4 neighbor cache.
+Records MAC,IP address pairs observed in the local IPv4 neighbor cache.
 
 .DESCRIPTION
-The script keeps a running inventory of observed MAC addresses, with first
-seen time, last seen time, and the IPv4 addresses seen for each MAC.
+The script keeps a running inventory of observed MAC,IP address pairs, with
+first seen time and last seen time for each pair.
 
 It is intended for passive local-link observation. It does not scan the
 network and should not be used as proof that all devices in a VLAN were
 found.
 
-The output file is created or replaced as a PowerShell data file. The
+The output file is created or replaced as a PowerShell CLIXML file. The
 parent directory is created when needed. If the script stops normally or is
 interrupted, it attempts one final write. A terminating error can leave the
 latest observations not written, and may leave a temporary file beside the
@@ -19,30 +19,30 @@ target file.
 .OUTPUTS
 Produces no pipeline output.
 
-Creates or updates a PSD1 file containing:
+Creates or updates a CLIXML file containing:
   GeneratedAt : Timestamp of the file generation.
   SeenMACs    : List of records, one per MAC,IP address pair.
     MAC                : MAC address.
     IP                 : IPv4 address.
-    FirstSeenTimestamp : First time this MAC,IP was observed.
-    LastSeenTimestamp  : Most recent time this MAC,IP was observed.
+    FirstSeenTimestamp : First time this MAC,IP pair was observed.
+    LastSeenTimestamp  : Most recent time this MAC,IP pair was observed.
 
 .PARAMETER OutputPath
-Path of the PSD1 inventory file to create or update.
+Path of the CLIXML inventory file to create or update.
 
 .PARAMETER PollSeconds
 Number of seconds between neighbor-cache observations.
 
 .PARAMETER IdleWriteSeconds
-Maximum seconds between writes when no new MAC or IP has been observed.
+Maximum seconds between writes when no new MAC,IP pair has been observed.
 
 .PARAMETER ActiveWriteSeconds
-Maximum seconds between writes while new MAC or IP observations exist.
+Maximum seconds between writes while new MAC,IP pair observations exist.
 
 .EXAMPLE
 .\Watch-SeenMacAddresses.ps1
 
-Starts passive observation and writes to the default PSD1 path.
+Starts passive observation and writes to the default CLIXML path.
 
 .EXAMPLE
 .\Watch-SeenMacAddresses.ps1 -PollSeconds 15 -ActiveWriteSeconds 30
@@ -53,7 +53,7 @@ Polls every 15 seconds and writes changed data at most every 30 seconds.
 #requires -Version 5.1
 
 param(
-    [string]$OutputPath = 'C:\it\log\seen_MAC_addresses.psd1',
+    [string]$OutputPath = 'C:\it\log\seen_MAC_addresses.clixml',
     [int]$PollSeconds = 15,
     [int]$IdleWriteSeconds = 420,
     [int]$ActiveWriteSeconds = 30
@@ -67,15 +67,25 @@ $ErrorActionPreference = 'Stop'
 .SYNOPSIS
 Normalizes a MAC address for inventory use.
 
-.OUTPUTS
-Produces a string when the value is a usable unicast-like MAC address:
-  The MAC address in uppercase hyphen-separated form.
+.DESCRIPTION
+Returns a consistent uppercase hyphen-separated MAC address when the input
+is usable for this inventory. Values that are blank, malformed, all zeros,
+broadcast, or IPv4 multicast MAC patterns are rejected.
 
-Produces null when the value is blank, malformed, all zeros, broadcast, or
-an IPv4 multicast MAC pattern.
+.OUTPUTS
+Produces a string when the value is valid.
+
+Produces null when the value is not usable.
 
 .PARAMETER MacAddress
 MAC address text to validate and normalize.
+
+.EXAMPLE
+Normalize-MacAddress -MacAddress '00:15:5d:00:19:09'
+
+Returns:
+
+00-15-5D-00-19-09
 #>
 function Normalize-MacAddress {
     param([string]$MacAddress)
@@ -110,6 +120,11 @@ function Normalize-MacAddress {
 .SYNOPSIS
 Tests whether a value is a usable unicast IPv4 address for inventory use.
 
+.DESCRIPTION
+Returns true only for IPv4 addresses that are useful for this inventory.
+Non-IPv4 values, 0.x.x.x values, and multicast/reserved 224.x.x.x or higher
+values are rejected.
+
 .OUTPUTS
 Produces a Boolean:
   True  : The value is IPv4 and not in excluded first-octet ranges.
@@ -117,6 +132,11 @@ Produces a Boolean:
 
 .PARAMETER IPAddress
 Address text to evaluate.
+
+.EXAMPLE
+Test-UnicastIPv4Address -IPAddress '10.30.0.5'
+
+Returns true.
 #>
 function Test-UnicastIPv4Address {
     param([string]$IPAddress)
@@ -148,32 +168,78 @@ function Test-UnicastIPv4Address {
 
 <#
 .SYNOPSIS
-Creates a new in-memory record for one observed MAC address.
+Creates a stable key for one MAC,IP pair.
+
+.DESCRIPTION
+The returned key is used only internally by the script to deduplicate
+observations. The file output still stores MAC and IP as separate fields.
+
+.OUTPUTS
+Produces a string key.
+
+.PARAMETER MacAddress
+Normalized MAC address.
+
+.PARAMETER IPAddress
+IPv4 address.
+
+.EXAMPLE
+New-SeenMacPairKey -MacAddress '00-15-5D-00-19-09' -IPAddress '10.30.0.5'
+
+Returns:
+
+00-15-5D-00-19-09|10.30.0.5
+#>
+function New-SeenMacPairKey {
+    param(
+        [string]$MacAddress,
+        [string]$IPAddress
+    )
+
+    return ('{0}|{1}' -f $MacAddress, $IPAddress)
+}
+
+
+<#
+.SYNOPSIS
+Creates a new in-memory record for one observed MAC,IP pair.
+
+.DESCRIPTION
+Creates the canonical in-memory representation used by the script.
 
 .OUTPUTS
 Produces an ordered hashtable:
-  MAC                : The MAC address for the record.
+  MAC                : MAC address.
+  IP                 : IPv4 address.
   FirstSeenTimestamp : Timestamp assigned as the first observation time.
   LastSeenTimestamp  : Timestamp assigned as the latest observation time.
-  IPs                : Empty hashtable used to hold observed IPv4 addresses.
 
 .PARAMETER MacAddress
 MAC address represented by the record.
 
+.PARAMETER IPAddress
+IPv4 address represented by the record.
+
 .PARAMETER Timestamp
 Timestamp to assign to both first seen and last seen.
+
+.EXAMPLE
+New-SeenMacRecord -MacAddress '00-15-5D-00-19-09' -IPAddress '10.30.0.5' -Timestamp (Get-Date)
+
+Creates a new record for that MAC,IP pair.
 #>
 function New-SeenMacRecord {
     param(
         [string]$MacAddress,
+        [string]$IPAddress,
         [datetime]$Timestamp
     )
 
     return [ordered]@{
         MAC = $MacAddress
+        IP = $IPAddress
         FirstSeenTimestamp = $Timestamp
         LastSeenTimestamp = $Timestamp
-        IPs = @{}
     }
 }
 
@@ -187,12 +253,22 @@ Use this when the caller needs inventory-oriented observations rather than
 raw neighbor-cache entries. Entries that are not useful for MAC/IP inventory
 are not returned.
 
+Neighbor-cache entries in Incomplete or Unreachable state are ignored.
+Malformed MAC addresses, broadcast MAC addresses, all-zero MAC addresses,
+IPv4 multicast MAC patterns, and unusable IPv4 addresses are ignored.
+
 .OUTPUTS
 Produces a psCustomObject for each usable current observation:
   MAC            : Normalized MAC address.
   IP             : IPv4 address observed for the MAC.
   State          : Neighbor-cache state as text.
   InterfaceAlias : Interface where the observation exists.
+
+.EXAMPLE
+Get-CurrentArpEntries
+
+Returns the current usable MAC,IP observations from the local IPv4 neighbor
+cache.
 #>
 function Get-CurrentArpEntries {
     $neighbors = @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue)
@@ -228,30 +304,85 @@ function Get-CurrentArpEntries {
 }
 
 
-# Formats a string value as a PSD1 single-quoted string expression.
-function ConvertTo-Psd1String {
-    param([string]$Value)
+<#
+.SYNOPSIS
+Reads a named value from an imported object.
 
-    return "'" + ($Value -replace "'", "''") + "'"
-}
+.DESCRIPTION
+Supports both hashtable-like objects and normal/deserialized PowerShell
+objects. This is useful because CLIXML import returns deserialized objects,
+while older or manually constructed data may contain dictionaries.
 
+.OUTPUTS
+Produces the value when found.
 
-# Formats string values as a PSD1 array expression.
-function ConvertTo-Psd1StringArray {
-    param([string[]]$Values)
+Produces null when the value is not found.
 
-    $items = @($Values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+.PARAMETER Item
+Object to inspect.
 
-    if ($items.Count -eq 0) {
-        return '@()'
+.PARAMETER Name
+Property or dictionary key to read.
+
+.EXAMPLE
+Get-InventoryValue -Item $record -Name 'MAC'
+
+Returns the MAC value if it exists.
+#>
+function Get-InventoryValue {
+    param(
+        [object]$Item,
+        [string]$Name
+    )
+
+    if ($null -eq $Item) {
+        return $null
     }
 
-    $quotedItems = @($items | ForEach-Object { ConvertTo-Psd1String -Value $_ })
-    return '@(' + ($quotedItems -join ', ') + ')'
+    if ($Item -is [System.Collections.IDictionary]) {
+        if ($Item.Contains($Name)) {
+            return $Item[$Name]
+        }
+
+        if ($Item.ContainsKey($Name)) {
+            return $Item[$Name]
+        }
+
+        return $null
+    }
+
+    $property = $Item.PSObject.Properties[$Name]
+
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
 }
 
 
-# Converts a value to DateTime, or returns a supplied default.
+<#
+.SYNOPSIS
+Converts a value to DateTime, or returns a supplied default.
+
+.DESCRIPTION
+Accepts DateTime values and timestamp strings. String values are parsed
+using invariant culture and round-trip date/time style.
+
+.OUTPUTS
+Produces a DateTime value.
+
+.PARAMETER Value
+Value to convert.
+
+.PARAMETER DefaultValue
+DateTime value to return when conversion fails.
+
+.EXAMPLE
+ConvertTo-DateTimeOrDefault -Value '2026-06-10T19:42:59.6605579+03:00' -DefaultValue (Get-Date)
+
+Returns the parsed DateTime value when parsing succeeds.
+#>
 function ConvertTo-DateTimeOrDefault {
     param(
         [object]$Value,
@@ -260,6 +391,10 @@ function ConvertTo-DateTimeOrDefault {
 
     if ($null -eq $Value) {
         return $DefaultValue
+    }
+
+    if ($Value -is [datetime]) {
+        return [datetime]$Value
     }
 
     try {
@@ -276,26 +411,117 @@ function ConvertTo-DateTimeOrDefault {
 
 <#
 .SYNOPSIS
-Loads an existing seen-MAC PSD1 inventory file.
+Adds or merges one MAC,IP record into the in-memory inventory.
+
+.DESCRIPTION
+Adds a record when the MAC,IP pair is new. If the same MAC,IP pair already
+exists, the earliest FirstSeenTimestamp and latest LastSeenTimestamp are
+kept.
+
+Invalid MAC or IP values are ignored.
+
+.OUTPUTS
+Produces no pipeline output.
+
+.PARAMETER SeenMacs
+Inventory hashtable keyed by internal MAC,IP pair key.
+
+.PARAMETER MacAddress
+MAC address for the record.
+
+.PARAMETER IPAddress
+IPv4 address for the record.
+
+.PARAMETER FirstSeenTimestamp
+First observed timestamp.
+
+.PARAMETER LastSeenTimestamp
+Last observed timestamp.
+
+.EXAMPLE
+Add-SeenMacRecord -SeenMacs $seenMacs -MacAddress '00-15-5D-00-19-09' -IPAddress '10.30.0.5' -FirstSeenTimestamp (Get-Date) -LastSeenTimestamp (Get-Date)
+
+Adds or updates that pair in the inventory.
+#>
+function Add-SeenMacRecord {
+    param(
+        [hashtable]$SeenMacs,
+        [string]$MacAddress,
+        [string]$IPAddress,
+        [datetime]$FirstSeenTimestamp,
+        [datetime]$LastSeenTimestamp
+    )
+
+    $normalizedMacAddress = Normalize-MacAddress -MacAddress $MacAddress
+
+    if (-not $normalizedMacAddress) {
+        return
+    }
+
+    if (-not (Test-UnicastIPv4Address -IPAddress $IPAddress)) {
+        return
+    }
+
+    $normalizedIpAddress = [string]$IPAddress
+    $key = New-SeenMacPairKey -MacAddress $normalizedMacAddress -IPAddress $normalizedIpAddress
+
+    if (-not $SeenMacs.ContainsKey($key)) {
+        $SeenMacs[$key] = New-SeenMacRecord -MacAddress $normalizedMacAddress -IPAddress $normalizedIpAddress -Timestamp $FirstSeenTimestamp
+        $SeenMacs[$key]['LastSeenTimestamp'] = $LastSeenTimestamp
+        return
+    }
+
+    $record = $SeenMacs[$key]
+
+    if ($FirstSeenTimestamp -lt [datetime]$record['FirstSeenTimestamp']) {
+        $record['FirstSeenTimestamp'] = $FirstSeenTimestamp
+    }
+
+    if ($LastSeenTimestamp -gt [datetime]$record['LastSeenTimestamp']) {
+        $record['LastSeenTimestamp'] = $LastSeenTimestamp
+    }
+}
+
+
+<#
+.SYNOPSIS
+Loads an existing seen-MAC CLIXML inventory file.
 
 .DESCRIPTION
 Returns an in-memory inventory suitable for continued observation. Missing
-files, files without a SeenMACs key, and invalid records result in no record
-for the invalid or missing data.
+files, files without a SeenMACs property, and invalid records result in no
+record for the invalid or missing data.
 
-Invalid MAC addresses are ignored. Invalid timestamps are replaced with the
-current time. Invalid IP addresses are ignored.
+Invalid MAC addresses are ignored. Invalid IP addresses are ignored. Invalid
+timestamps are replaced with the current time.
+
+The importer primarily expects the current CLIXML shape:
+
+  GeneratedAt
+  SeenMACs
+    MAC
+    IP
+    FirstSeenTimestamp
+    LastSeenTimestamp
+
+For tolerance during transition, it can also read older records that contain
+an IPs array instead of a single IP field.
 
 .OUTPUTS
-Produces a hashtable keyed by MAC address. Each value is an ordered
-hashtable:
+Produces a hashtable keyed by internal MAC,IP pair key. Each value is an
+ordered hashtable:
   MAC                : Normalized MAC address.
+  IP                 : IPv4 address.
   FirstSeenTimestamp : Loaded or defaulted first observation time.
   LastSeenTimestamp  : Loaded or defaulted latest observation time.
-  IPs                : Hashtable of observed IPv4 addresses.
 
 .PARAMETER Path
-Path of the PSD1 inventory file to load.
+Path of the CLIXML inventory file to load.
+
+.EXAMPLE
+Import-SeenMacFile -Path 'C:\it\log\seen_MAC_addresses.clixml'
+
+Loads the inventory if the file exists.
 #>
 function Import-SeenMacFile {
     param([string]$Path)
@@ -307,34 +533,43 @@ function Import-SeenMacFile {
     }
 
     $now = Get-Date
-    $data = Import-PowerShellDataFile -LiteralPath $Path
 
-    if (-not $data.ContainsKey('SeenMACs')) {
+    try {
+        $data = Import-Clixml -LiteralPath $Path
+    } catch {
+        throw "Could not read existing CLIXML inventory file '$Path'. Use another OutputPath or fix/remove the existing file. Original error: $($_.Exception.Message)"
+    }
+
+    $items = Get-InventoryValue -Item $data -Name 'SeenMACs'
+
+    if ($null -eq $items) {
         return $seenMacs
     }
 
-    foreach ($item in @($data['SeenMACs'])) {
+    foreach ($item in @($items)) {
         if ($null -eq $item) {
             continue
         }
 
-        $macAddress = Normalize-MacAddress -MacAddress ([string]$item['MAC'])
+        $macAddress = Normalize-MacAddress -MacAddress ([string](Get-InventoryValue -Item $item -Name 'MAC'))
 
         if (-not $macAddress) {
             continue
         }
 
-        $record = New-SeenMacRecord -MacAddress $macAddress -Timestamp $now
-        $record['FirstSeenTimestamp'] = ConvertTo-DateTimeOrDefault -Value $item['FirstSeenTimestamp'] -DefaultValue $now
-        $record['LastSeenTimestamp'] = ConvertTo-DateTimeOrDefault -Value $item['LastSeenTimestamp'] -DefaultValue $now
+        $firstSeenTimestamp = ConvertTo-DateTimeOrDefault -Value (Get-InventoryValue -Item $item -Name 'FirstSeenTimestamp') -DefaultValue $now
+        $lastSeenTimestamp = ConvertTo-DateTimeOrDefault -Value (Get-InventoryValue -Item $item -Name 'LastSeenTimestamp') -DefaultValue $now
 
-        foreach ($ipAddress in @($item['IPs'])) {
-            if (Test-UnicastIPv4Address -IPAddress ([string]$ipAddress)) {
-                $record['IPs'][[string]$ipAddress] = $true
-            }
+        $ipAddress = Get-InventoryValue -Item $item -Name 'IP'
+
+        if ($null -ne $ipAddress) {
+            Add-SeenMacRecord -SeenMacs $seenMacs -MacAddress $macAddress -IPAddress ([string]$ipAddress) -FirstSeenTimestamp $firstSeenTimestamp -LastSeenTimestamp $lastSeenTimestamp
+            continue
         }
 
-        $seenMacs[$macAddress] = $record
+        foreach ($oldIpAddress in @((Get-InventoryValue -Item $item -Name 'IPs'))) {
+            Add-SeenMacRecord -SeenMacs $seenMacs -MacAddress $macAddress -IPAddress ([string]$oldIpAddress) -FirstSeenTimestamp $firstSeenTimestamp -LastSeenTimestamp $lastSeenTimestamp
+        }
     }
 
     return $seenMacs
@@ -343,11 +578,15 @@ function Import-SeenMacFile {
 
 <#
 .SYNOPSIS
-Writes the seen-MAC inventory to a PSD1 file.
+Writes the seen-MAC inventory to a CLIXML file.
 
 .DESCRIPTION
-Writes the supplied inventory as a PowerShell data file. The parent
+Writes the supplied inventory as a PowerShell CLIXML file. The parent
 directory is created when needed. The target file is created or replaced.
+
+The write is staged through a temporary file beside the target path. If the
+target already exists, it is replaced through System.IO.File.Replace. If the
+target does not exist, the temporary file is moved into place.
 
 A terminating error can leave the target file not updated and may leave a
 temporary file beside the target path.
@@ -358,10 +597,15 @@ Produces no pipeline output.
 Writes status text to the host.
 
 .PARAMETER SeenMacs
-Inventory hashtable keyed by MAC address.
+Inventory hashtable keyed by internal MAC,IP pair key.
 
 .PARAMETER Path
-Path of the PSD1 file to create or replace.
+Path of the CLIXML file to create or replace.
+
+.EXAMPLE
+Write-SeenMacFile -SeenMacs $seenMacs -Path 'C:\it\log\seen_MAC_addresses.clixml'
+
+Writes the current inventory to CLIXML.
 #>
 function Write-SeenMacFile {
     param(
@@ -378,40 +622,30 @@ function Write-SeenMacFile {
         }
     }
 
-    $lines = New-Object System.Collections.Generic.List[string]
-    $generatedAt = (Get-Date).ToString('o')
-
-    $lines.Add('@{')
-    $lines.Add("    GeneratedAt = $(ConvertTo-Psd1String -Value $generatedAt)")
-    $lines.Add('    SeenMACs = @(')
-
     $records = @(
         $SeenMacs.GetEnumerator() |
             Sort-Object Name |
-            ForEach-Object { $_.Value }
+            ForEach-Object {
+                $record = $_.Value
+
+                [pscustomobject][ordered]@{
+                    MAC = [string]$record['MAC']
+                    IP = [string]$record['IP']
+                    FirstSeenTimestamp = ([datetime]$record['FirstSeenTimestamp']).ToString('o')
+                    LastSeenTimestamp = ([datetime]$record['LastSeenTimestamp']).ToString('o')
+                }
+            }
     )
 
-    foreach ($record in $records) {
-        $macAddress = [string]$record['MAC']
-        $firstSeen = ([datetime]$record['FirstSeenTimestamp']).ToString('o')
-        $lastSeen = ([datetime]$record['LastSeenTimestamp']).ToString('o')
-        $ipList = ConvertTo-Psd1StringArray -Values @($record['IPs'].Keys)
-
-        $lines.Add('        @{')
-        $lines.Add("            MAC = $(ConvertTo-Psd1String -Value $macAddress)")
-        $lines.Add("            FirstSeenTimestamp = $(ConvertTo-Psd1String -Value $firstSeen)")
-        $lines.Add("            LastSeenTimestamp = $(ConvertTo-Psd1String -Value $lastSeen)")
-        $lines.Add("            IPs = $ipList")
-        $lines.Add('        }')
+    $data = [pscustomobject][ordered]@{
+        GeneratedAt = (Get-Date).ToString('o')
+        SeenMACs = $records
     }
-
-    $lines.Add('    )')
-    $lines.Add('}')
 
     $temporaryPath = $fullPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     $backupPath = $fullPath + '.' + [guid]::NewGuid().ToString('N') + '.bak'
 
-    Set-Content -LiteralPath $temporaryPath -Value $lines -Encoding UTF8
+    $data | Export-Clixml -LiteralPath $temporaryPath -Depth 5 -Encoding UTF8
 
     try {
         if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
@@ -431,7 +665,7 @@ function Write-SeenMacFile {
         throw
     }
 
-    Write-Host ("{0} Wrote {1} MAC entries to {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $SeenMacs.Count, $fullPath)
+    Write-Host ("{0} Wrote {1} MAC,IP entries to {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $SeenMacs.Count, $fullPath)
 }
 
 
@@ -451,7 +685,7 @@ $seenMacs = Import-SeenMacFile -Path $OutputPath
 $lastWriteTimestamp = (Get-Date).AddSeconds(-$ActiveWriteSeconds)
 $newDataSinceLastWrite = $false
 
-Write-Host ("Loaded {0} existing MAC entries." -f $seenMacs.Count)
+Write-Host ("Loaded {0} existing MAC,IP entries." -f $seenMacs.Count)
 Write-Host ("Polling every {0}s. Writing to {1}" -f $PollSeconds, $OutputPath)
 
 try {
@@ -462,19 +696,16 @@ try {
         foreach ($entry in $entries) {
             $macAddress = [string]$entry.MAC
             $ipAddress = [string]$entry.IP
+            $key = New-SeenMacPairKey -MacAddress $macAddress -IPAddress $ipAddress
 
-            if (-not $seenMacs.ContainsKey($macAddress)) {
-                $seenMacs[$macAddress] = New-SeenMacRecord -MacAddress $macAddress -Timestamp $now
+            if (-not $seenMacs.ContainsKey($key)) {
+                $seenMacs[$key] = New-SeenMacRecord -MacAddress $macAddress -IPAddress $ipAddress -Timestamp $now
                 $newDataSinceLastWrite = $true
+                continue
             }
 
-            $record = $seenMacs[$macAddress]
+            $record = $seenMacs[$key]
             $record['LastSeenTimestamp'] = $now
-
-            if (-not $record['IPs'].ContainsKey($ipAddress)) {
-                $record['IPs'][$ipAddress] = $true
-                $newDataSinceLastWrite = $true
-            }
         }
 
         $secondsSinceLastWrite = ($now - $lastWriteTimestamp).TotalSeconds

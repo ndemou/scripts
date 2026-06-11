@@ -651,20 +651,20 @@
           <a class="script-link" href="Watch-SeenMacAddresses.ps1">Watch-SeenMacAddresses.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Watch-SeenMacAddresses.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Watch-SeenMacAddresses.ps1" aria-label="Copy download command for Watch-SeenMacAddresses.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
-          <p class="script-synopsis">Records MAC,IP addresses observed in the local IPv4 neighbor cache.</p>
+          <p class="script-synopsis">Records MAC,IP address pairs observed in the local IPv4 neighbor cache.</p>
         <details class="script-details">
           <summary>Read more</summary>
-          <p class="script-details-text">The script keeps a running inventory of observed MAC addresses, with first<br>seen time, last seen time, and the IPv4 addresses seen for each MAC.</p>
+          <p class="script-details-text">The script keeps a running inventory of observed MAC,IP address pairs, with<br>first seen time and last seen time for each pair.</p>
           <p class="script-details-text">It is intended for passive local-link observation. It does not scan the<br>network and should not be used as proof that all devices in a VLAN were<br>found.</p>
-          <p class="script-details-text">The output file is created or replaced as a PowerShell data file. The<br>parent directory is created when needed. If the script stops normally or is<br>interrupted, it attempts one final write. A terminating error can leave the<br>latest observations not written, and may leave a temporary file beside the<br>target file.</p>
+          <p class="script-details-text">The output file is created or replaced as a PowerShell CLIXML file. The<br>parent directory is created when needed. If the script stops normally or is<br>interrupted, it attempts one final write. A terminating error can leave the<br>latest observations not written, and may leave a temporary file beside the<br>target file.</p>
           <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Produces no pipeline output.</p>
-          <p class="script-details-text">Creates or updates a PSD1 file containing:<br>GeneratedAt : Timestamp of the file generation.<br>SeenMACs    : List of records, one per MAC,IP address pair.<br>MAC                : MAC address.<br>IP                 : IPv4 address.<br>FirstSeenTimestamp : First time this MAC,IP was observed.<br>LastSeenTimestamp  : Most recent time this MAC,IP was observed.</p>
-          <p class="script-details-text">.PARAMETER OutputPath<br>Path of the PSD1 inventory file to create or update.</p>
+          <p class="script-details-text">Creates or updates a CLIXML file containing:<br>GeneratedAt : Timestamp of the file generation.<br>SeenMACs    : List of records, one per MAC,IP address pair.<br>MAC                : MAC address.<br>IP                 : IPv4 address.<br>FirstSeenTimestamp : First time this MAC,IP pair was observed.<br>LastSeenTimestamp  : Most recent time this MAC,IP pair was observed.</p>
+          <p class="script-details-text">.PARAMETER OutputPath<br>Path of the CLIXML inventory file to create or update.</p>
           <p class="script-details-text">.PARAMETER PollSeconds<br>Number of seconds between neighbor-cache observations.</p>
-          <p class="script-details-text">.PARAMETER IdleWriteSeconds<br>Maximum seconds between writes when no new MAC or IP has been observed.</p>
-          <p class="script-details-text">.PARAMETER ActiveWriteSeconds<br>Maximum seconds between writes while new MAC or IP observations exist.</p>
+          <p class="script-details-text">.PARAMETER IdleWriteSeconds<br>Maximum seconds between writes when no new MAC,IP pair has been observed.</p>
+          <p class="script-details-text">.PARAMETER ActiveWriteSeconds<br>Maximum seconds between writes while new MAC,IP pair observations exist.</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Watch-SeenMacAddresses.ps1</p>
-          <p class="script-details-text">Starts passive observation and writes to the default PSD1 path.</p>
+          <p class="script-details-text">Starts passive observation and writes to the default CLIXML path.</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Watch-SeenMacAddresses.ps1 -PollSeconds 15 -ActiveWriteSeconds 30</p>
           <p class="script-details-text">Polls every 15 seconds and writes changed data at most every 30 seconds.</p>
         </details>
