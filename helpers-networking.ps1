@@ -167,10 +167,10 @@ The report keeps the first and last time each remote IP was observed
 during the current watch run. Local ports and TCP states are accumulated
 per remote IP for the life of the watch run.
 
-When SaveToFile is provided, the report is also written to that path.
-The parent directory is created if needed. The file is overwritten with
-the current cumulative report no more often than SaveIntervalSeconds.
-File write errors are not suppressed.
+When SaveToFile is provided, the report is also written in .CLIXML 
+format to that path. If the file already exists, it is read and reporting
+continuous assuming these data as a start. So you can terminate and
+resume operation at any time. The parent directory is created if needed. 
 
 .OUTPUTS
 Produces formatted text reports while the watch is running:
@@ -196,8 +196,7 @@ When set, connections whose remote address is one of the server's own
 IP addresses may be included. Otherwise, they are excluded.
 
 .PARAMETER SaveToFile
-Path to a text file that receives the same cumulative report shown on
-screen.
+Path to a .CLIXML file that receives the same data shown on screen.
 
 .PARAMETER SaveIntervalSeconds
 Minimum number of seconds between writes to SaveToFile.
@@ -238,16 +237,59 @@ function Watch-RemoteIpOnLowListeningTcpPort {
         [int]$SaveIntervalSeconds = 60
     )
 
+    $functionName = 'Watch-RemoteIpOnLowListeningTcpPort'
+    $stateVersion = 1
+    $observed = @{}
+    $started = Get-Date
+    $lastFileWrite = $null
+
     if ($SaveToFile) {
         $parentDir = Split-Path -Path $SaveToFile -Parent
         if ($parentDir -and -not (Test-Path -LiteralPath $parentDir -PathType Container)) {
             New-Item -Path $parentDir -ItemType Directory -Force | Out-Null
         }
-    }
 
-    $observed = @{}
-    $started = Get-Date
-    $lastFileWrite = $null
+        if (Test-Path -LiteralPath $SaveToFile -PathType Leaf) {
+            try {
+                $savedState = Import-Clixml -LiteralPath $SaveToFile -ErrorAction Stop
+
+                if (-not $savedState.FunctionName -or
+                    $savedState.FunctionName -ne $functionName -or
+                    -not $savedState.Observations) {
+                    throw "The file is not a saved state from $functionName."
+                }
+
+                if ($savedState.Started) {
+                    $started = $savedState.Started
+                }
+
+                foreach ($item in @($savedState.Observations)) {
+                    if (-not $item.RemoteAddress) {
+                        throw "Saved state contains an observation without RemoteAddress."
+                    }
+
+                    $observed[$item.RemoteAddress] = [pscustomobject]@{
+                        RemoteAddress = [string]$item.RemoteAddress
+                        LocalPorts    = @($item.LocalPorts)
+                        States        = @($item.States)
+                        FirstSeen     = $item.FirstSeen
+                        LastSeen      = $item.LastSeen
+                    }
+                }
+
+                Write-Verbose "Loaded saved state from $SaveToFile"
+                Write-Verbose "Loaded observed remote IP count: $($observed.Count)"
+            } catch {
+                throw @"
+Could not read '$SaveToFile' as a saved CLIXML state from $functionName.
+Use another SaveToFile name, or rename/remove the existing file.
+
+Original error:
+$($_.Exception.Message)
+"@
+            }
+        }
+    }
 
     while ($true) {
         $now = Get-Date
@@ -269,8 +311,10 @@ function Watch-RemoteIpOnLowListeningTcpPort {
             }
 
             $entry = $observed[$item.RemoteAddress]
-            $entry.LocalPorts = @($entry.LocalPorts + $item.LocalPorts | Sort-Object -Unique)
-            $entry.States = @($entry.States + $item.States | Sort-Object -Unique)
+            $entry.LocalPorts = @($entry.LocalPorts + $item.LocalPorts |
+                Sort-Object -Unique)
+            $entry.States = @($entry.States + $item.States |
+                Sort-Object -Unique)
             $entry.LastSeen = $now
         }
 
@@ -289,18 +333,19 @@ function Watch-RemoteIpOnLowListeningTcpPort {
         $reportLines += "Now:   $now"
 
         if ($SaveToFile) {
-            $reportLines += "File:  $SaveToFile"
+            $reportLines += "State file: $SaveToFile"
             if ($lastFileWrite) {
                 $reportLines += "Last file write: $lastFileWrite"
             } else {
-                $reportLines += "Last file write: never"
+                $reportLines += "Last file write: not during this run"
             }
         }
 
         $reportLines += ""
 
         if ($rows.Count -gt 0) {
-            $reportLines += (($rows | Format-Table -AutoSize | Out-String).TrimEnd())
+            $reportLines += (($rows | Format-Table -AutoSize |
+                Out-String).TrimEnd())
         } else {
             $reportLines += "(none)"
         }
@@ -320,9 +365,32 @@ function Watch-RemoteIpOnLowListeningTcpPort {
             }
 
             if ($shouldWrite) {
-                Set-Content -LiteralPath $SaveToFile -Value $report -Encoding UTF8
+                $observations = @($observed.Values |
+                    Sort-Object RemoteAddress |
+                    ForEach-Object {
+                        [pscustomobject]@{
+                            RemoteAddress = $_.RemoteAddress
+                            LocalPorts    = @($_.LocalPorts)
+                            States        = @($_.States)
+                            FirstSeen     = $_.FirstSeen
+                            LastSeen      = $_.LastSeen
+                        }
+                    })
+
+                $state = [pscustomobject]@{
+                    FunctionName                   = $functionName
+                    StateVersion                   = $stateVersion
+                    Started                        = $started
+                    LastUpdated                    = $now
+                    MaxListeningPortExclusive      = $MaxListeningPortExclusive
+                    States                         = @($States)
+                    IncludeLocalMachineConnections = [bool]$IncludeLocalMachineConnections
+                    Observations                   = $observations
+                }
+
+                $state | Export-Clixml -LiteralPath $SaveToFile -Force
                 $lastFileWrite = $now
-                Write-Verbose "Saved report to $SaveToFile"
+                Write-Verbose "Saved CLIXML state to $SaveToFile"
             } else {
                 Write-Verbose "Skipped file write; last write was $([int](($now - $lastFileWrite).TotalSeconds)) seconds ago."
             }
