@@ -167,7 +167,7 @@ The report keeps the first and last time each remote IP was observed
 during the current watch run. Local ports and TCP states are accumulated
 per remote IP for the life of the watch run.
 
-When SaveToFile is provided, the report is also written in .CLIXML 
+When StateFile is provided, the report is also written in .CLIXML 
 format to that path. If the file already exists, it is read and reporting
 continuous assuming these data as a start. So you can terminate and
 resume operation at any time. The parent directory is created if needed. 
@@ -195,11 +195,11 @@ as Established, TimeWait, CloseWait, LastAck, FinWait1, and FinWait2.
 When set, connections whose remote address is one of the server's own
 IP addresses may be included. Otherwise, they are excluded.
 
-.PARAMETER SaveToFile
+.PARAMETER StateFile
 Path to a .CLIXML file that receives the same data shown on screen.
 
 .PARAMETER SaveIntervalSeconds
-Minimum number of seconds between writes to SaveToFile.
+Minimum number of seconds between writes to StateFile.
 
 .EXAMPLE
 Watch-RemoteIpOnLowListeningTcpPort
@@ -209,7 +209,7 @@ port observations made since the watch started.
 
 .EXAMPLE
 Watch-RemoteIpOnLowListeningTcpPort -Seconds 5 `
-    -SaveToFile C:\Temp\observed-connections.txt
+    -StateFile C:\Temp\observed-connections.txt
 
 Refreshes the screen every 5 seconds and writes the cumulative report
 to the file at the configured save interval.
@@ -232,7 +232,7 @@ function Watch-RemoteIpOnLowListeningTcpPort {
 
         [switch]$IncludeLocalMachineConnections,
 
-        [string]$SaveToFile,
+        [string]$StateFile,
 
         [int]$SaveIntervalSeconds = 60
     )
@@ -243,15 +243,15 @@ function Watch-RemoteIpOnLowListeningTcpPort {
     $started = Get-Date
     $lastFileWrite = $null
 
-    if ($SaveToFile) {
-        $parentDir = Split-Path -Path $SaveToFile -Parent
+    if ($StateFile) {
+        $parentDir = Split-Path -Path $StateFile -Parent
         if ($parentDir -and -not (Test-Path -LiteralPath $parentDir -PathType Container)) {
             New-Item -Path $parentDir -ItemType Directory -Force | Out-Null
         }
 
-        if (Test-Path -LiteralPath $SaveToFile -PathType Leaf) {
+        if (Test-Path -LiteralPath $StateFile -PathType Leaf) {
             try {
-                $savedState = Import-Clixml -LiteralPath $SaveToFile -ErrorAction Stop
+                $savedState = Import-Clixml -LiteralPath $StateFile -ErrorAction Stop
 
                 if (-not $savedState.FunctionName -or
                     $savedState.FunctionName -ne $functionName -or
@@ -277,12 +277,12 @@ function Watch-RemoteIpOnLowListeningTcpPort {
                     }
                 }
 
-                Write-Verbose "Loaded saved state from $SaveToFile"
+                Write-Verbose "Loaded saved state from $StateFile"
                 Write-Verbose "Loaded observed remote IP count: $($observed.Count)"
             } catch {
                 throw @"
-Could not read '$SaveToFile' as a saved CLIXML state from $functionName.
-Use another SaveToFile name, or rename/remove the existing file.
+Could not read '$StateFile' as a saved CLIXML state from $functionName.
+Use another StateFile name, or rename/remove the existing file.
 
 Original error:
 $($_.Exception.Message)
@@ -332,8 +332,8 @@ $($_.Exception.Message)
         $reportLines += "Since: $started"
         $reportLines += "Now:   $now"
 
-        if ($SaveToFile) {
-            $reportLines += "State file: $SaveToFile"
+        if ($StateFile) {
+            $reportLines += "State file: $StateFile"
             if ($lastFileWrite) {
                 $reportLines += "Last file write: $lastFileWrite"
             } else {
@@ -355,7 +355,7 @@ $($_.Exception.Message)
         Clear-Host
         Write-Output $report
 
-        if ($SaveToFile) {
+        if ($StateFile) {
             $shouldWrite = $false
 
             if (-not $lastFileWrite) {
@@ -388,9 +388,9 @@ $($_.Exception.Message)
                     Observations                   = $observations
                 }
 
-                $state | Export-Clixml -LiteralPath $SaveToFile -Force
+                $state | Export-Clixml -LiteralPath $StateFile -Force
                 $lastFileWrite = $now
-                Write-Verbose "Saved CLIXML state to $SaveToFile"
+                Write-Verbose "Saved CLIXML state to $StateFile"
             } else {
                 Write-Verbose "Skipped file write; last write was $([int](($now - $lastFileWrite).TotalSeconds)) seconds ago."
             }
