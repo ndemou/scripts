@@ -356,12 +356,35 @@
             </details>
           </div>
           <div class="function-entry">
-            <p class="function-name"><strong>Invoke-DetachedPSScript</strong></p>
-            <p class="function-synopsis">Executes a PowerShell script on a remote host as a detached process without leaving a disconnected session after execution completes.</p>
+            <p class="function-name"><strong>Invoke-DetachedScriptLocally</strong></p>
+            <p class="function-synopsis">Runs a PowerShell script in the background as SYSTEM user.</p>
             <details class="script-details function-details">
               <summary>Read more</summary>
-              <p class="script-details-text">The script or script block is executed on the remote host. Unlike<br>`Invoke-Command -InDisconnectedSession` once the execution terminates<br>it does not leave a disconnected session on the target.</p>
-              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Produces a PSCustomObject representing the process start result:<br>ComputerName  : The target host name.<br>ProcessId     : The ID of the newly created remote process.<br>ReturnValue   : The system code from the process creation attempt.<br>Status        : The outcome of the initiation (e.g., &quot;Success&quot;).<br>ExecutionPath : The path to the script being executed on the target.</p>
+              <p class="script-details-text">The script runs elevated as a scheduled task under the local SYSTEM account,<br>and does not depend on the current terminal staying open or the user staying<br>logged-in. Note: SYSTEM has very limited network access. In many environments,<br>it cannot access normal user-mapped drives, user profile locations, remote<br>file shares, SharePoint/OneDrive sync paths owned by a user, or network<br>resources that require the user&#x27;s credentials.</p>
+              <p class="script-details-text">.PARAMETER ScriptPath<br>The local path of the .ps1 script to run.</p>
+              <p class="script-details-text">.PARAMETER ArgumentList<br>Optional arguments to pass to the script.</p>
+              <p class="script-details-text">.PARAMETER LogPath<br>Optional path for redirected script output. If omitted, a log file is created<br>under the TEMP directory of the caller.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Invoke-DetachedScriptLocally -ScriptPath &#x27;C:\Scripts\Foo.ps1&#x27;</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Invoke-DetachedScriptLocally -ScriptPath &#x27;C:\Scripts\Foo.ps1&#x27; -ArgumentList &#x27;server01&#x27;, &#x27;full&#x27;</p>
+              <p class="script-details-text">Runs the script as SYSTEM and passes two arguments.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Invoke-DetachedScriptLocally -ScriptPath &#x27;C:\Scripts\Foo.ps1&#x27; -LogPath &#x27;C:\Temp\Foo.log&#x27; -Verbose</p>
+              <p class="script-details-text">Runs the script as SYSTEM and writes verbose messages about cleanup of old idle<br>tasks.</p>
+            </details>
+          </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Invoke-DetachedPSScript</strong></p>
+            <p class="function-synopsis">Executes a PowerShell script locally or on a remote host as a detached process.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">If Computer refers to the local machine, the script is executed through<br>Invoke-DetachedScriptLocally. This means that:<br>the script runs elevated as a scheduled task under the local SYSTEM account,<br>and does not depend on the current terminal staying open or the user staying<br>logged-in. Note: SYSTEM has very limited network access. In many environments,<br>it cannot access normal user-mapped drives, user profile locations, remote<br>file shares, SharePoint/OneDrive sync paths owned by a user, or network<br>resources that require the user&#x27;s credentials.</p>
+              <p class="script-details-text">If Computer refers to a remote machine, the script is copied if needed and then<br>started remotely through CIM/WMI using Win32_Process.Create. Again the script<br>does not depend on the current terminal staying open or the user staying<br>logged-in or even the controller-computer being powered-on. This method also<br>avoids leaving a disconnected PowerShell remoting session after execution<br>completes.</p>
+              <p class="script-details-text">.PARAMETER Script<br>Path to a .ps1 script.</p>
+              <p class="script-details-text">.PARAMETER ScriptBlock<br>For local execution, it is written to:<br>C:\ProgramData\TempForDetachedScripts\Scripts</p>
+              <p class="script-details-text">For remote execution, it is written locally first, copied to the remote TEMP<br>directory (old generated remote temp scripts are cleaned up).</p>
+              <p class="script-details-text">.PARAMETER LogFile<br>Optional log file path. For local execution, if omitted, a log file is created<br>under:<br>C:\ProgramData\TempForDetachedScripts\Logs</p>
+              <p class="script-details-text">For remote execution, if supplied, Start-Transcript is used on the remote host.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>For local execution, returns task information from Invoke-DetachedScriptLocally<br>plus ComputerName, Status, and ExecutionMode.</p>
+              <p class="script-details-text">For remote execution, returns a PSCustomObject with:<br>ComputerName, ProcessId, ReturnValue, Status, and ExecutionPath.</p>
             </details>
           </div>
           <div class="function-entry">
