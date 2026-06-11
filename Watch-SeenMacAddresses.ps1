@@ -27,7 +27,7 @@ Creates or updates a CLIXML file containing:
     FirstSeenTimestamp : First time this MAC,IP pair was observed.
     LastSeenTimestamp  : Most recent time this MAC,IP pair was observed.
 
-.PARAMETER OutputPath
+.PARAMETER StateFile
 Path of the CLIXML inventory file to create or update.
 
 .PARAMETER PollSeconds
@@ -53,7 +53,7 @@ Polls every 15 seconds and writes changed data at most every 30 seconds.
 #requires -Version 5.1
 
 param(
-    [string]$OutputPath = 'C:\it\log\seen_MAC_addresses.clixml',
+    [string]$StateFile = 'C:\it\log\seen_MAC_addresses.clixml',
     [int]$PollSeconds = 15,
     [int]$IdleWriteSeconds = 420,
     [int]$ActiveWriteSeconds = 30
@@ -534,7 +534,7 @@ function Import-SeenMacFile {
     try {
         $data = Import-Clixml -LiteralPath $Path
     } catch {
-        throw "Could not read existing CLIXML inventory file '$Path'. Use another OutputPath or fix/remove the existing file. Original error: $($_.Exception.Message)"
+        throw "Could not read existing CLIXML inventory file '$Path'. Use another StateFile or fix/remove the existing file. Original error: $($_.Exception.Message)"
     }
 
     $items = Get-InventoryValue -Item $data -Name 'SeenMACs'
@@ -675,12 +675,12 @@ if ($ActiveWriteSeconds -lt 1) {
     throw "ActiveWriteSeconds must be at least 1."
 }
 
-$seenMacs = Import-SeenMacFile -Path $OutputPath
+$seenMacs = Import-SeenMacFile -Path $StateFile
 $lastWriteTimestamp = (Get-Date).AddSeconds(-$ActiveWriteSeconds)
 $newDataSinceLastWrite = $false
 
 Write-Host ("Loaded {0} existing MAC,IP entries." -f $seenMacs.Count)
-Write-Host ("Polling every {0}s. Writing to {1}" -f $PollSeconds, $OutputPath)
+Write-Host ("Polling every {0}s. Writing to {1}" -f $PollSeconds, $StateFile)
 
 try {
     while ($true) {
@@ -705,16 +705,16 @@ try {
         $secondsSinceLastWrite = ($now - $lastWriteTimestamp).TotalSeconds
 
         if ($newDataSinceLastWrite -and $secondsSinceLastWrite -ge $ActiveWriteSeconds) {
-            Write-SeenMacFile -SeenMacs $seenMacs -Path $OutputPath
+            Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
             $lastWriteTimestamp = Get-Date
             $newDataSinceLastWrite = $false
         } elseif ((-not $newDataSinceLastWrite) -and $secondsSinceLastWrite -ge $IdleWriteSeconds) {
-            Write-SeenMacFile -SeenMacs $seenMacs -Path $OutputPath
+            Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
             $lastWriteTimestamp = Get-Date
         }
 
         Start-Sleep -Seconds $PollSeconds
     }
 } finally {
-    Write-SeenMacFile -SeenMacs $seenMacs -Path $OutputPath
+    Write-SeenMacFile -SeenMacs $seenMacs -Path $StateFile
 }
