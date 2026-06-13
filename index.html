@@ -204,24 +204,40 @@
           </div>
           <div class="function-entry">
             <p class="function-name"><strong>Watch-RemoteIpOnLowListeningTcpPort</strong></p>
-            <p class="function-synopsis">Watches(and logs) remote IPs observed on local listening TCP ports.</p>
+            <p class="function-synopsis">Watches and optionally reports remote IPs observed on local listening TCP ports.</p>
             <details class="script-details function-details">
               <summary>Read more</summary>
-              <p class="script-details-text">Maintains a cumulative in-session report of remote IPs that have been<br>observed on non-loopback local listening TCP ports below the configured<br>port limit.</p>
-              <p class="script-details-text">Each cycle refreshes the screen and prints the cumulative report. The<br>watch continues until interrupted, for example with Ctrl+C.</p>
-              <p class="script-details-text">The report keeps the first and last time each remote IP was observed<br>during the current watch run. Local ports and TCP states are accumulated<br>per remote IP for the life of the watch run.</p>
-              <p class="script-details-text">When StateFile is provided, the report is also written in .CLIXML<br>format to that path. If the file already exists, it is read and reporting<br>continuous assuming these data as a start. So you can terminate and<br>resume operation at any time. The parent directory is created if needed.</p>
-              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>Produces formatted text reports while the watch is running:<br>RemoteAddress : The remote IP address.<br>LocalPorts    : Local listening port or ports observed.<br>States        : TCP state or states observed.<br>FirstSeen     : First time seen during this watch run.<br>LastSeen      : Last time seen during this watch run.</p>
-              <p class="script-details-text">.PARAMETER Seconds<br>Delay between refresh cycles.</p>
-              <p class="script-details-text">.PARAMETER MaxListeningPortExclusive<br>Upper exclusive local listening port limit. Only listening TCP ports<br>below this value are considered.</p>
-              <p class="script-details-text">.PARAMETER States<br>TCP states to include. Use names accepted by the State property, such<br>as Established, TimeWait, CloseWait, LastAck, FinWait1, and FinWait2.</p>
-              <p class="script-details-text">.PARAMETER IncludeLocalMachineConnections<br>When set, connections whose remote address is one of the server&#x27;s own<br>IP addresses may be included. Otherwise, they are excluded.</p>
-              <p class="script-details-text">.PARAMETER StateFile<br>Path to a .CLIXML file that receives the same data shown on screen.</p>
+              <p class="script-details-text">Maintains a cumulative record of remote IPs observed on non-loopback local<br>listening TCP ports below the configured port limit.</p>
+              <p class="script-details-text">The watch continues until interrupted, for example with Ctrl+C. By default,<br>it runs silently and does not produce success-stream output.</p>
+              <p class="script-details-text">For each remote IP, the function records the first and last observation time.<br>Local ports and TCP states are accumulated for the lifetime of the stored<br>state.</p>
+              <p class="script-details-text">When ShowReport is specified, the cumulative report is displayed periodically.<br>Report generation is controlled separately from connection sampling to avoid<br>repeatedly constructing a potentially large formatted report.</p>
+              <p class="script-details-text">When StateFile is provided, the cumulative state is saved in CLIXML format.<br>If the file already exists, its observations are loaded and collection<br>continues from that state. This allows the watch to be stopped and resumed.</p>
+              <p class="script-details-text">The parent directory of StateFile is created when necessary. State is first<br>written to a temporary file and then moved over the configured state file to<br>reduce the risk of leaving a partially written file.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>None by default.</p>
+              <p class="script-details-text">When ShowReport is specified, the function writes a formatted report directly<br>to the host. The report contains:</p>
+              <p class="script-details-text">RemoteAddress : The remote IP address.<br>LocalPorts    : Local listening port or ports observed.<br>States        : TCP state or states observed.<br>FirstSeen     : First time the remote IP was observed.<br>LastSeen      : Most recent time the remote IP was observed.</p>
+              <p class="script-details-text">The formatted report is host output and is not written to the success-output<br>pipeline.</p>
+              <p class="script-details-text">.PARAMETER Seconds<br>Number of seconds between TCP connection sampling cycles.</p>
+              <p class="script-details-text">The default is 10 seconds.</p>
+              <p class="script-details-text">.PARAMETER MaxListeningPortExclusive<br>Upper exclusive local listening port limit. Only listening TCP ports below<br>this value are considered.</p>
+              <p class="script-details-text">The default is 49152.</p>
+              <p class="script-details-text">.PARAMETER States<br>TCP states to include, such as Established, TimeWait, CloseWait, LastAck,<br>FinWait1, and FinWait2.</p>
+              <p class="script-details-text">.PARAMETER IncludeLocalMachineConnections<br>Includes connections whose remote address is one of the server&#x27;s own IP<br>addresses.</p>
+              <p class="script-details-text">By default, loopback, unspecified, and local-machine remote addresses are<br>excluded.</p>
+              <p class="script-details-text">.PARAMETER StateFile<br>Path to the CLIXML file used to load and save the cumulative observations.</p>
+              <p class="script-details-text">The file contains structured state, not the formatted on-screen report.</p>
               <p class="script-details-text">.PARAMETER SaveIntervalSeconds<br>Minimum number of seconds between writes to StateFile.</p>
+              <p class="script-details-text">The default is 60 seconds. This parameter has no effect when StateFile is not<br>specified.</p>
+              <p class="script-details-text">.PARAMETER ShowReport<br>Displays the cumulative report periodically.</p>
+              <p class="script-details-text">By default, reporting is disabled. Collection and StateFile updates continue<br>normally without this switch.</p>
+              <p class="script-details-text">.PARAMETER ReportIntervalSeconds<br>Minimum number of seconds between displayed reports when ShowReport is<br>specified.</p>
+              <p class="script-details-text">The default is 300 seconds. This parameter does not affect the connection<br>sampling interval.</p>
               <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Watch-RemoteIpOnLowListeningTcpPort</p>
-              <p class="script-details-text">Refreshes the screen every 10 seconds and shows all remote IP and local<br>port observations made since the watch started.</p>
-              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Watch-RemoteIpOnLowListeningTcpPort -Seconds 5 `<br>-StateFile C:\Temp\observed-connections.txt</p>
-              <p class="script-details-text">Refreshes the screen every 5 seconds and writes the cumulative report<br>to the file at the configured save interval.</p>
+              <p class="script-details-text">Samples TCP connections every 10 seconds and maintains cumulative observations<br>in memory. It produces no regular report and does not persist the observations.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Watch-RemoteIpOnLowListeningTcpPort `<br>-StateFile C:\IT\log\seen_tcp_connections.clixml</p>
+              <p class="script-details-text">Samples TCP connections every 10 seconds, loads any existing observations from<br>the CLIXML file, and saves the cumulative state at intervals of at least<br>60 seconds. It does not display the cumulative report.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Watch-RemoteIpOnLowListeningTcpPort `<br>-Seconds 5 `<br>-StateFile C:\Temp\observed-connections.clixml `<br>-ShowReport `<br>-ReportIntervalSeconds 300</p>
+              <p class="script-details-text">Samples connections every 5 seconds, saves cumulative state to the CLIXML file,<br>and displays the cumulative report no more than once every 5 minutes.</p>
             </details>
           </div>
           <div class="function-entry">

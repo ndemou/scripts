@@ -71,152 +71,210 @@ function Get-RemoteIpOnLowListeningTcpPort {
         [switch]$IncludeLocalMachineConnections
     )
 
-    $loopbackAddresses = @('127.0.0.1', '::1')
-    $invalidRemoteAddresses = @('127.0.0.1', '::1', '0.0.0.0', '::')
+    $stateSet = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
 
-    $localIpAddresses = @(Get-NetIPAddress |
-        Where-Object {
-            $_.IPAddress -and
-            $_.IPAddress -notlike '169.254.*' -and
-            $_.IPAddress -ne '::'
-        } |
-        Select-Object -ExpandProperty IPAddress -Unique)
-
-    if ($IncludeLocalMachineConnections) {
-        $excludedRemoteAddresses = $invalidRemoteAddresses
-    } else {
-        $excludedRemoteAddresses = @($invalidRemoteAddresses + $localIpAddresses | Sort-Object -Unique)
+    foreach ($state in $States) {
+        [void]$stateSet.Add($state)
     }
 
-    Write-Verbose "Excluded remote addresses: $($excludedRemoteAddresses -join ', ')"
+    $excludedRemoteAddresses = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
 
-    $externalListening = @(Get-NetTCPConnection -State Listen |
-        Where-Object {
-            $loopbackAddresses -notcontains $_.LocalAddress
-        })
+    foreach ($address in @('127.0.0.1', '::1', '0.0.0.0', '::')) {
+        [void]$excludedRemoteAddresses.Add($address)
+    }
 
-    $lowExternalListeningPorts = @($externalListening |
-        Select-Object -ExpandProperty LocalPort -Unique |
-        Where-Object { $_ -lt $MaxListeningPortExclusive } |
-        Sort-Object)
+    if (-not $IncludeLocalMachineConnections) {
+        foreach ($networkInterface in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+            foreach ($unicastAddress in $networkInterface.GetIPProperties().UnicastAddresses) {
+                $address = $unicastAddress.Address.ToString()
 
-    Write-Verbose "External listening TCP ports below $($MaxListeningPortExclusive): $($lowExternalListeningPorts -join ', ')"
+                if ($address -and
+                    $address -notlike '169.254.*' -and
+                    $address -ne '::') {
+                    [void]$excludedRemoteAddresses.Add($address)
+                }
+            }
+        }
+    }
 
-    if ($lowExternalListeningPorts.Count -eq 0) {
-        Write-Verbose "No matching listening ports found."
+    $ipProperties = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()
+
+    $listeningPorts = [System.Collections.Generic.HashSet[int]]::new()
+
+    foreach ($endpoint in $ipProperties.GetActiveTcpListeners()) {
+        if ($endpoint.Port -lt $MaxListeningPortExclusive -and
+            -not [System.Net.IPAddress]::IsLoopback($endpoint.Address)) {
+            [void]$listeningPorts.Add($endpoint.Port)
+        }
+    }
+
+    if ($listeningPorts.Count -eq 0) {
+        Write-Verbose 'No matching listening ports found.'
         return
     }
 
-    $connections = @(Get-NetTCPConnection -ErrorAction SilentlyContinue |
-        Where-Object {
-            $States -contains ([string]$_.State) -and
-            $lowExternalListeningPorts -contains $_.LocalPort -and
-            $excludedRemoteAddresses -notcontains $_.RemoteAddress
-        } |
-        Sort-Object RemoteAddress, LocalPort, State)
+    $groups = @{}
 
-    Write-Verbose "Matching connections found: $($connections.Count)"
+    foreach ($connection in $ipProperties.GetActiveTcpConnections()) {
+        $state = $connection.State.ToString()
+        $remoteAddress = $connection.RemoteEndPoint.Address.ToString()
+        $localPort = $connection.LocalEndPoint.Port
 
-    foreach ($connection in $connections) {
-        Write-Verbose ("Local={0}:{1} Remote={2}:{3} State={4} PID={5}" -f `
-            $connection.LocalAddress,
-            $connection.LocalPort,
-            $connection.RemoteAddress,
-            $connection.RemotePort,
-            $connection.State,
-            $connection.OwningProcess)
+        if (-not $stateSet.Contains($state) -or
+            -not $listeningPorts.Contains($localPort) -or
+            $excludedRemoteAddresses.Contains($remoteAddress)) {
+            continue
+        }
+
+        if (-not $groups.ContainsKey($remoteAddress)) {
+            $groups[$remoteAddress] = [pscustomobject]@{
+                LocalPorts = [System.Collections.Generic.HashSet[int]]::new()
+                States     = [System.Collections.Generic.HashSet[string]]::new(
+                    [System.StringComparer]::OrdinalIgnoreCase
+                )
+                Count      = 0
+            }
+        }
+
+        $group = $groups[$remoteAddress]
+        [void]$group.LocalPorts.Add($localPort)
+        [void]$group.States.Add($state)
+        $group.Count++
     }
 
-    $connections |
-        Group-Object RemoteAddress |
-        ForEach-Object {
-            $remoteAddress = $_.Name
-            $items = @($_.Group)
+    foreach ($remoteAddress in @($groups.Keys | Sort-Object)) {
+        $group = $groups[$remoteAddress]
 
-            $localPorts = @($items |
-                Select-Object -ExpandProperty LocalPort -Unique |
-                Sort-Object)
-
-            $observedStates = @($items |
-                ForEach-Object { [string]$_.State } |
-                Sort-Object -Unique)
-
-            [pscustomobject]@{
-                RemoteAddress   = $remoteAddress
-                LocalPorts      = $localPorts
-                States          = $observedStates
-                ConnectionCount = $items.Count
-            }
-        } |
-        Sort-Object RemoteAddress
+        [pscustomobject]@{
+            RemoteAddress   = $remoteAddress
+            LocalPorts      = @($group.LocalPorts | Sort-Object)
+            States          = @($group.States | Sort-Object)
+            ConnectionCount = $group.Count
+        }
+    }
 }
+
 
 <#
 .SYNOPSIS
-Watches(and logs) remote IPs observed on local listening TCP ports.
+Watches and optionally reports remote IPs observed on local listening TCP ports.
 
 .DESCRIPTION
-Maintains a cumulative in-session report of remote IPs that have been
-observed on non-loopback local listening TCP ports below the configured
-port limit.
+Maintains a cumulative record of remote IPs observed on non-loopback local
+listening TCP ports below the configured port limit.
 
-Each cycle refreshes the screen and prints the cumulative report. The
-watch continues until interrupted, for example with Ctrl+C.
+The watch continues until interrupted, for example with Ctrl+C. By default,
+it runs silently and does not produce success-stream output.
 
-The report keeps the first and last time each remote IP was observed
-during the current watch run. Local ports and TCP states are accumulated
-per remote IP for the life of the watch run.
+For each remote IP, the function records the first and last observation time.
+Local ports and TCP states are accumulated for the lifetime of the stored
+state.
 
-When StateFile is provided, the report is also written in .CLIXML 
-format to that path. If the file already exists, it is read and reporting
-continuous assuming these data as a start. So you can terminate and
-resume operation at any time. The parent directory is created if needed. 
+When ShowReport is specified, the cumulative report is displayed periodically.
+Report generation is controlled separately from connection sampling to avoid
+repeatedly constructing a potentially large formatted report.
+
+When StateFile is provided, the cumulative state is saved in CLIXML format.
+If the file already exists, its observations are loaded and collection
+continues from that state. This allows the watch to be stopped and resumed.
+
+The parent directory of StateFile is created when necessary. State is first
+written to a temporary file and then moved over the configured state file to
+reduce the risk of leaving a partially written file.
 
 .OUTPUTS
-Produces formatted text reports while the watch is running:
+None by default.
+
+When ShowReport is specified, the function writes a formatted report directly
+to the host. The report contains:
+
   RemoteAddress : The remote IP address.
   LocalPorts    : Local listening port or ports observed.
   States        : TCP state or states observed.
-  FirstSeen     : First time seen during this watch run.
-  LastSeen      : Last time seen during this watch run.
+  FirstSeen     : First time the remote IP was observed.
+  LastSeen      : Most recent time the remote IP was observed.
+
+The formatted report is host output and is not written to the success-output
+pipeline.
 
 .PARAMETER Seconds
-Delay between refresh cycles.
+Number of seconds between TCP connection sampling cycles.
+
+The default is 10 seconds.
 
 .PARAMETER MaxListeningPortExclusive
-Upper exclusive local listening port limit. Only listening TCP ports
-below this value are considered.
+Upper exclusive local listening port limit. Only listening TCP ports below
+this value are considered.
+
+The default is 49152.
 
 .PARAMETER States
-TCP states to include. Use names accepted by the State property, such
-as Established, TimeWait, CloseWait, LastAck, FinWait1, and FinWait2.
+TCP states to include, such as Established, TimeWait, CloseWait, LastAck,
+FinWait1, and FinWait2.
 
 .PARAMETER IncludeLocalMachineConnections
-When set, connections whose remote address is one of the server's own
-IP addresses may be included. Otherwise, they are excluded.
+Includes connections whose remote address is one of the server's own IP
+addresses.
+
+By default, loopback, unspecified, and local-machine remote addresses are
+excluded.
 
 .PARAMETER StateFile
-Path to a .CLIXML file that receives the same data shown on screen.
+Path to the CLIXML file used to load and save the cumulative observations.
+
+The file contains structured state, not the formatted on-screen report.
 
 .PARAMETER SaveIntervalSeconds
 Minimum number of seconds between writes to StateFile.
 
+The default is 60 seconds. This parameter has no effect when StateFile is not
+specified.
+
+.PARAMETER ShowReport
+Displays the cumulative report periodically.
+
+By default, reporting is disabled. Collection and StateFile updates continue
+normally without this switch.
+
+.PARAMETER ReportIntervalSeconds
+Minimum number of seconds between displayed reports when ShowReport is
+specified.
+
+The default is 300 seconds. This parameter does not affect the connection
+sampling interval.
+
 .EXAMPLE
 Watch-RemoteIpOnLowListeningTcpPort
 
-Refreshes the screen every 10 seconds and shows all remote IP and local
-port observations made since the watch started.
+Samples TCP connections every 10 seconds and maintains cumulative observations
+in memory. It produces no regular report and does not persist the observations.
 
 .EXAMPLE
-Watch-RemoteIpOnLowListeningTcpPort -Seconds 5 `
-    -StateFile C:\Temp\observed-connections.txt
+Watch-RemoteIpOnLowListeningTcpPort `
+    -StateFile C:\IT\log\seen_tcp_connections.clixml
 
-Refreshes the screen every 5 seconds and writes the cumulative report
-to the file at the configured save interval.
+Samples TCP connections every 10 seconds, loads any existing observations from
+the CLIXML file, and saves the cumulative state at intervals of at least
+60 seconds. It does not display the cumulative report.
+
+.EXAMPLE
+Watch-RemoteIpOnLowListeningTcpPort `
+    -Seconds 5 `
+    -StateFile C:\Temp\observed-connections.clixml `
+    -ShowReport `
+    -ReportIntervalSeconds 300
+
+Samples connections every 5 seconds, saves cumulative state to the CLIXML file,
+and displays the cumulative report no more than once every 5 minutes.
 #>
 function Watch-RemoteIpOnLowListeningTcpPort {
     [CmdletBinding()]
     param(
+        [ValidateRange(1, 86400)]
         [int]$Seconds = 10,
 
         [int]$MaxListeningPortExclusive = 49152,
@@ -234,18 +292,27 @@ function Watch-RemoteIpOnLowListeningTcpPort {
 
         [string]$StateFile,
 
-        [int]$SaveIntervalSeconds = 60
+        [ValidateRange(1, 86400)]
+        [int]$SaveIntervalSeconds = 60,
+
+        [switch]$ShowReport,
+
+        [ValidateRange(1, 86400)]
+        [int]$ReportIntervalSeconds = 300
     )
 
     $functionName = 'Watch-RemoteIpOnLowListeningTcpPort'
-    $stateVersion = 1
+    $stateVersion = 2
     $observed = @{}
     $started = Get-Date
     $lastFileWrite = $null
+    $lastReportWrite = $null
 
     if ($StateFile) {
         $parentDir = Split-Path -Path $StateFile -Parent
-        if ($parentDir -and -not (Test-Path -LiteralPath $parentDir -PathType Container)) {
+
+        if ($parentDir -and
+            -not (Test-Path -LiteralPath $parentDir -PathType Container)) {
             New-Item -Path $parentDir -ItemType Directory -Force | Out-Null
         }
 
@@ -255,20 +322,20 @@ function Watch-RemoteIpOnLowListeningTcpPort {
 
                 if (-not $savedState.FunctionName -or
                     $savedState.FunctionName -ne $functionName -or
-                    -not $savedState.Observations) {
+                    $null -eq $savedState.Observations) {
                     throw "The file is not a saved state from $functionName."
                 }
 
                 if ($savedState.Started) {
-                    $started = $savedState.Started
+                    $started = [datetime]$savedState.Started
                 }
 
                 foreach ($item in @($savedState.Observations)) {
                     if (-not $item.RemoteAddress) {
-                        throw "Saved state contains an observation without RemoteAddress."
+                        throw 'Saved state contains an observation without RemoteAddress.'
                     }
 
-                    $observed[$item.RemoteAddress] = [pscustomobject]@{
+                    $observed[[string]$item.RemoteAddress] = [pscustomobject]@{
                         RemoteAddress = [string]$item.RemoteAddress
                         LocalPorts    = @($item.LocalPorts)
                         States        = @($item.States)
@@ -277,8 +344,7 @@ function Watch-RemoteIpOnLowListeningTcpPort {
                     }
                 }
 
-                Write-Verbose "Loaded saved state from $StateFile"
-                Write-Verbose "Loaded observed remote IP count: $($observed.Count)"
+                Write-Verbose "Loaded $($observed.Count) observations from $StateFile"
             } catch {
                 throw @"
 Could not read '$StateFile' as a saved CLIXML state from $functionName.
@@ -294,15 +360,26 @@ $($_.Exception.Message)
     while ($true) {
         $now = Get-Date
 
-        $current = @(Get-RemoteIpOnLowListeningTcpPort `
-            -MaxListeningPortExclusive $MaxListeningPortExclusive `
-            -States $States `
-            -IncludeLocalMachineConnections:$IncludeLocalMachineConnections)
+        try {
+            $current = @(
+                Get-RemoteIpOnLowListeningTcpPort `
+                    -MaxListeningPortExclusive $MaxListeningPortExclusive `
+                    -States $States `
+                    -IncludeLocalMachineConnections:$IncludeLocalMachineConnections `
+                    -ErrorAction Stop
+            )
+        } catch {
+            Write-Warning "TCP connection collection failed: $($_.Exception.Message)"
+            Start-Sleep -Seconds $Seconds
+            continue
+        }
 
         foreach ($item in $current) {
-            if (-not $observed.ContainsKey($item.RemoteAddress)) {
-                $observed[$item.RemoteAddress] = [pscustomobject]@{
-                    RemoteAddress = $item.RemoteAddress
+            $remoteAddress = [string]$item.RemoteAddress
+
+            if (-not $observed.ContainsKey($remoteAddress)) {
+                $observed[$remoteAddress] = [pscustomobject]@{
+                    RemoteAddress = $remoteAddress
                     LocalPorts    = @()
                     States        = @()
                     FirstSeen     = $now
@@ -310,90 +387,114 @@ $($_.Exception.Message)
                 }
             }
 
-            $entry = $observed[$item.RemoteAddress]
-            $entry.LocalPorts = @($entry.LocalPorts + $item.LocalPorts |
-                Sort-Object -Unique)
-            $entry.States = @($entry.States + $item.States |
-                Sort-Object -Unique)
+            $entry = $observed[$remoteAddress]
+
+            $portSet = [System.Collections.Generic.HashSet[int]]::new()
+            foreach ($port in @($entry.LocalPorts) + @($item.LocalPorts)) {
+                [void]$portSet.Add([int]$port)
+            }
+
+            $stateSet = [System.Collections.Generic.HashSet[string]]::new(
+                [System.StringComparer]::OrdinalIgnoreCase
+            )
+            foreach ($state in @($entry.States) + @($item.States)) {
+                [void]$stateSet.Add([string]$state)
+            }
+
+            $entry.LocalPorts = @($portSet | Sort-Object)
+            $entry.States = @($stateSet | Sort-Object)
             $entry.LastSeen = $now
         }
 
-        $rows = @($observed.Values |
-            Sort-Object RemoteAddress |
-            Select-Object `
-                RemoteAddress,
-                @{Name='LocalPorts'; Expression={ $_.LocalPorts -join ', ' }},
-                @{Name='States'; Expression={ $_.States -join ', ' }},
-                FirstSeen,
-                LastSeen)
+        if ($StateFile -and
+            ($null -eq $lastFileWrite -or
+             ($now - $lastFileWrite).TotalSeconds -ge $SaveIntervalSeconds)) {
 
-        $reportLines = @()
-        $reportLines += "Observed remote IPs connected to low listening TCP ports"
-        $reportLines += "Since: $started"
-        $reportLines += "Now:   $now"
+            $observations = @(
+                foreach ($remoteAddress in @($observed.Keys | Sort-Object)) {
+                    $entry = $observed[$remoteAddress]
 
-        if ($StateFile) {
-            $reportLines += "State file: $StateFile"
-            if ($lastFileWrite) {
-                $reportLines += "Last file write: $lastFileWrite"
-            } else {
-                $reportLines += "Last file write: not during this run"
-            }
-        }
-
-        $reportLines += ""
-
-        if ($rows.Count -gt 0) {
-            $reportLines += (($rows | Format-Table -AutoSize |
-                Out-String).TrimEnd())
-        } else {
-            $reportLines += "(none)"
-        }
-
-        $report = $reportLines -join [Environment]::NewLine
-
-        Clear-Host
-        Write-Output $report
-
-        if ($StateFile) {
-            $shouldWrite = $false
-
-            if (-not $lastFileWrite) {
-                $shouldWrite = $true
-            } elseif (($now - $lastFileWrite).TotalSeconds -ge $SaveIntervalSeconds) {
-                $shouldWrite = $true
-            }
-
-            if ($shouldWrite) {
-                $observations = @($observed.Values |
-                    Sort-Object RemoteAddress |
-                    ForEach-Object {
-                        [pscustomobject]@{
-                            RemoteAddress = $_.RemoteAddress
-                            LocalPorts    = @($_.LocalPorts)
-                            States        = @($_.States)
-                            FirstSeen     = $_.FirstSeen
-                            LastSeen      = $_.LastSeen
-                        }
-                    })
-
-                $state = [pscustomobject]@{
-                    FunctionName                   = $functionName
-                    StateVersion                   = $stateVersion
-                    Started                        = $started
-                    LastUpdated                    = $now
-                    MaxListeningPortExclusive      = $MaxListeningPortExclusive
-                    States                         = @($States)
-                    IncludeLocalMachineConnections = [bool]$IncludeLocalMachineConnections
-                    Observations                   = $observations
+                    [pscustomobject]@{
+                        RemoteAddress = $entry.RemoteAddress
+                        LocalPorts    = @($entry.LocalPorts)
+                        States        = @($entry.States)
+                        FirstSeen     = $entry.FirstSeen
+                        LastSeen      = $entry.LastSeen
+                    }
                 }
+            )
 
-                $state | Export-Clixml -LiteralPath $StateFile -Force
+            $state = [pscustomobject]@{
+                FunctionName                   = $functionName
+                StateVersion                   = $stateVersion
+                Started                        = $started
+                LastUpdated                    = $now
+                MaxListeningPortExclusive      = $MaxListeningPortExclusive
+                States                         = @($States)
+                IncludeLocalMachineConnections = [bool]$IncludeLocalMachineConnections
+                Observations                   = $observations
+            }
+
+            $temporaryStateFile = "$StateFile.tmp"
+
+            try {
+                $state |
+                    Export-Clixml `
+                        -LiteralPath $temporaryStateFile `
+                        -Force `
+                        -ErrorAction Stop
+
+                Move-Item `
+                    -LiteralPath $temporaryStateFile `
+                    -Destination $StateFile `
+                    -Force `
+                    -ErrorAction Stop
+
                 $lastFileWrite = $now
                 Write-Verbose "Saved CLIXML state to $StateFile"
-            } else {
-                Write-Verbose "Skipped file write; last write was $([int](($now - $lastFileWrite).TotalSeconds)) seconds ago."
+            } finally {
+                if (Test-Path -LiteralPath $temporaryStateFile -PathType Leaf) {
+                    Remove-Item -LiteralPath $temporaryStateFile -Force -ErrorAction SilentlyContinue
+                }
             }
+        }
+
+        if ($ShowReport -and
+            ($null -eq $lastReportWrite -or
+             ($now - $lastReportWrite).TotalSeconds -ge $ReportIntervalSeconds)) {
+
+            $rows = @(
+                foreach ($remoteAddress in @($observed.Keys | Sort-Object)) {
+                    $entry = $observed[$remoteAddress]
+
+                    [pscustomobject]@{
+                        RemoteAddress = $entry.RemoteAddress
+                        LocalPorts    = $entry.LocalPorts -join ', '
+                        States        = $entry.States -join ', '
+                        FirstSeen     = $entry.FirstSeen
+                        LastSeen      = $entry.LastSeen
+                    }
+                }
+            )
+
+            $header = @(
+                'Observed remote IPs connected to low listening TCP ports'
+                "Since: $started"
+                "Now:   $now"
+                "State file: $StateFile"
+                "Last file write: $lastFileWrite"
+                ''
+            ) -join [Environment]::NewLine
+
+            Write-Host $header
+
+            if ($rows.Count -gt 0) {
+                $rows | Format-Table -AutoSize | Out-Host
+            } else {
+                Write-Host '(none)'
+            }
+
+            $lastReportWrite = $now
         }
 
         Start-Sleep -Seconds $Seconds
