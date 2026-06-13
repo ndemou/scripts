@@ -4,6 +4,7 @@ import html
 import re
 import textwrap
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -452,7 +453,7 @@ def render_item(doc: ScriptDoc) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def build_html(docs: list[ScriptDoc]) -> str:
+def build_html(docs: list[ScriptDoc], last_updated_utc: str) -> str:
     items = "\n".join(render_item(doc) for doc in docs)
     return f"""<!doctype html>
 <html lang="en">
@@ -473,6 +474,7 @@ def build_html(docs: list[ScriptDoc]) -> str:
       Source repository:
       <a href="{html.escape(REPO_URL)}">{html.escape(REPO_URL.removeprefix("https://"))}</a>
     </p>
+    <p class="footer">Last updated at {html.escape(last_updated_utc)}</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {{
@@ -519,7 +521,8 @@ def main() -> None:
         docs.append(doc)
         print_documented_item(doc)
     docs.sort(key=lambda doc: doc.path.relative_to(ROOT).as_posix().lower())
-    (ROOT / "index.html").write_text(build_html(docs), encoding="utf-8")
+    last_updated_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    (ROOT / "index.html").write_text(build_html(docs, last_updated_utc), encoding="utf-8")
 
 
 if __name__ == "__main__":
