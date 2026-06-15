@@ -52,6 +52,10 @@ creates PowerShell data files under the installation config directory.
 Creates a template PowerShell data file named GetComputerHealth.install.psd1 in the current
 working directory, then exits. Customize that file and pass its path to -Config.
 
+.PARAMETER ScheduleDailyInvokationAt
+Creates or updates a daily scheduled task for Invoke-GetComputerHealth.ps1
+at the specified 24-hour time in HH:mm format, then exits.
+
 .EXAMPLE
 .\Update-GetHealthCode.ps1
 
@@ -62,6 +66,9 @@ newer than the currently installed release marker.
 .EXAMPLE
 .\Update-GetHealthCode.ps1 -UpdateFromZip C:\Downloads\GetComputerHealth-v4.4.3.zip
 
+.EXAMPLE
+.\Update-GetHealthCode.ps1 -ScheduleDailyInvokationAt 07:12
+
 #>
 [CmdletBinding()]
 param(
@@ -71,6 +78,7 @@ param(
   [switch]$ForceRefreshReleaseMetadata,
   [object]$Config,
   [switch]$GenerateConfigPsd1,
+  [ValidatePattern('^\d{2}:\d{2}$')][string]$ScheduleDailyInvokationAt,
   [Parameter(DontShow=$true)][int]$SelfRerunCount = 0,
   [Parameter(DontShow=$true)][string]$PersistReleaseMarker
 )
@@ -258,6 +266,309 @@ function Write-UpdateEvent {
 
   if ([string]::IsNullOrWhiteSpace($Message)) { return }
   Write-Host $Message
+}
+
+function Quote-Win32Arg {
+  param([AllowNull()][string]$InputString)
+
+  if ($null -eq $InputString) { return '""' }
+  if ($InputString.Length -eq 0) { return '""' }
+  if ($InputString -notmatch '[\s"]') { return $InputString }
+
+  $builder = New-Object System.Text.StringBuilder
+  [void]$builder.Append('"')
+  $index = 0
+  while ($index -lt $InputString.Length) {
+    $character = $InputString[$index]
+    if ($character -eq '\') {
+      $backslashCount = 0
+      while ($index -lt $InputString.Length -and $InputString[$index] -eq '\') {
+        $backslashCount++
+        $index++
+      }
+
+      if ($index -eq $InputString.Length) {
+        [void]$builder.Append(('\' * ($backslashCount * 2)))
+        break
+      }
+
+      if ($InputString[$index] -eq '"') {
+        [void]$builder.Append(('\' * ($backslashCount * 2 + 1)))
+        [void]$builder.Append('"')
+        $index++
+      }
+      else {
+        [void]$builder.Append(('\' * $backslashCount))
+      }
+      continue
+    }
+
+    if ($character -eq '"') {
+      [void]$builder.Append('\\"')
+      $index++
+      continue
+    }
+
+    [void]$builder.Append($character)
+    $index++
+  }
+
+  [void]$builder.Append('"')
+  return $builder.ToString()
+}
+
+function Join-Win32CommandLine {
+  param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$ArgumentList)
+
+  $quotedArguments = @()
+  foreach ($argument in $ArgumentList) {
+    $quotedArguments += (Quote-Win32Arg -InputString ([string]$argument))
+  }
+  return ($quotedArguments -join ' ')
+}
+
+function New-ScheduledTaskForPSScript {
+  [CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = 'Generic')]
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'Generic')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'Daily')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'Weekly')]
+    [ValidateSet('Startup', 'Daily', 'Weekly', 'Hourly', 'EveryMinute', 'Manual')]
+    [string]$ScheduleType,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'Daily')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'Weekly')]
+    [ValidatePattern('^\d{2}:\d{2}$')]
+    [string]$Time,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'Weekly')]
+    [DayOfWeek[]]$Day,
+
+    [string]$TaskPath = '\enLogic\',
+    [string]$TaskName,
+    [string[]]$ScriptArguments,
+    [string]$RawArgumentsAvoidMe,
+    [TimeSpan]$ExecutionTimeLimit = (New-TimeSpan -Hours 2),
+    [switch]$StartItNow
+  )
+
+  if ($RawArgumentsAvoidMe -and $ScriptArguments) {
+    throw "Use either -ScriptArguments (recommended) or -RawArgumentsAvoidMe (for advanced users), not both."
+  }
+
+  $scriptFullName = $ScriptPath
+  if (Test-Path -LiteralPath $scriptFullName) {
+    try {
+      $scriptFullName = (Resolve-Path -LiteralPath $scriptFullName).ProviderPath
+    }
+    catch {
+      throw "Failed to resolve script path: $ScriptPath. Error: $_"
+    }
+  }
+  else {
+    throw "Script not found: $ScriptPath"
+  }
+
+  $scriptFolder = Split-Path -Parent $scriptFullName
+  $scriptFile = Split-Path -Leaf $scriptFullName
+  $baseName = [System.IO.Path]::GetFileNameWithoutExtension($scriptFile)
+
+  if (-not $TaskName) { $TaskName = "Execute $scriptFile" }
+  $taskDescription = "Run script $scriptFullName"
+
+  $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  if (-not (Test-Path -LiteralPath $psExe)) {
+    throw "powershell.exe not found at expected path: $psExe"
+  }
+
+  $needsBatchWrapper = $false
+  $scriptUnsafePattern = '[\"`^&|<>()]'
+  $argUnsafePattern = '[\s\"`^&|<>()]'
+  $rawUnsafePattern = '[\"`^]'
+
+  if ($scriptFullName -match $scriptUnsafePattern) {
+    $needsBatchWrapper = $true
+  }
+
+  if (-not $needsBatchWrapper -and $ScriptArguments) {
+    foreach ($argument in $ScriptArguments) {
+      if ($null -ne $argument -and $argument -match $argUnsafePattern) {
+        $needsBatchWrapper = $true
+        break
+      }
+    }
+  }
+
+  if (-not $needsBatchWrapper -and $RawArgumentsAvoidMe) {
+    if ($RawArgumentsAvoidMe -match $rawUnsafePattern) {
+      $needsBatchWrapper = $true
+    }
+  }
+
+  $action = $null
+  $batchPath = $null
+
+  if ($needsBatchWrapper) {
+    $escapedScript = $scriptFullName.Replace("'", "''")
+    if ($ScriptArguments) {
+      $escapedArgs = @()
+      foreach ($argument in $ScriptArguments) {
+        if ($null -eq $argument) {
+          $escapedArgs += '$null'
+        }
+        else {
+          $escapedArgs += "'" + $argument.Replace("'", "''") + "'"
+        }
+      }
+      $argLiteral = '@(' + ($escapedArgs -join ',') + ')'
+      $code = "& '$escapedScript' $argLiteral"
+    }
+    elseif ($RawArgumentsAvoidMe) {
+      $code = "& '$escapedScript' $RawArgumentsAvoidMe"
+    }
+    else {
+      $code = "& '$escapedScript'"
+    }
+
+    $bytes = [System.Text.Encoding]::Unicode.GetBytes($code)
+    $encodedCommand = [Convert]::ToBase64String($bytes)
+
+    $batchBase = "{0}-{1}-task" -f $baseName, $ScheduleType
+    $batchName = "$batchBase.cmd"
+    $batchPath = Join-Path $scriptFolder $batchName
+    $counter = 1
+    while (Test-Path -LiteralPath $batchPath) {
+      $batchName = "{0}-{1}-task-{2}.cmd" -f $baseName, $ScheduleType, $counter
+      $batchPath = Join-Path $scriptFolder $batchName
+      $counter++
+    }
+
+    $singleLineCode = $code -replace '(\r?\n)+', '; '
+    $decodeHint = "[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('$encodedCommand'))"
+
+    $batchContent =
+      "@echo off`r`n" +
+      "REM Auto-generated by New-ScheduledTaskForPSScript`r`n" +
+      "REM Decoded PowerShell command:`r`n" +
+      "REM   $singleLineCode`r`n" +
+      "REM To decode the Base64 payload in PowerShell, run:`r`n" +
+      "REM   $decodeHint`r`n" +
+      '"' + $psExe + '"' +
+      " -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand " +
+      $encodedCommand + "`r`n"
+
+    try {
+      [System.IO.File]::WriteAllText($batchPath, $batchContent, [System.Text.Encoding]::ASCII)
+    }
+    catch {
+      throw "Failed to create batch wrapper '$batchPath'. Error: $_"
+    }
+
+    $action = New-ScheduledTaskAction -Execute $batchPath -ErrorAction Stop
+  }
+  else {
+    $argumentParts = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptFullName)
+    if ($ScriptArguments) {
+      $argumentParts += $ScriptArguments
+    }
+    elseif ($RawArgumentsAvoidMe) {
+      $argumentParts += $RawArgumentsAvoidMe
+    }
+
+    $argumentString = Join-Win32CommandLine -ArgumentList $argumentParts
+    if ([string]::IsNullOrWhiteSpace($argumentString)) {
+      throw 'Internal error: produced empty argument string for task action.'
+    }
+
+    $action = New-ScheduledTaskAction -Execute $psExe -Argument $argumentString -ErrorAction Stop
+  }
+
+  if (-not $action) {
+    throw 'Internal error: Scheduled task action was not created.'
+  }
+
+  $trigger = $null
+  switch ($ScheduleType) {
+    'Startup' { $trigger = New-ScheduledTaskTrigger -AtStartup }
+    'Daily' { $trigger = New-ScheduledTaskTrigger -Daily -At $Time }
+    'Weekly' { $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Day -At $Time }
+    'Hourly' {
+      $start = (Get-Date).AddMinutes(1)
+      $trigger = New-ScheduledTaskTrigger -Once -At $start -RepetitionInterval (New-TimeSpan -Hours 1)
+    }
+    'EveryMinute' {
+      $start = (Get-Date).AddMinutes(1)
+      $trigger = New-ScheduledTaskTrigger -Once -At $start -RepetitionInterval (New-TimeSpan -Minutes 1)
+    }
+    'Manual' { $trigger = $null }
+  }
+
+  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit $ExecutionTimeLimit
+
+  if ($TaskPath.EndsWith('\')) {
+    $taskPathWithSlash = $TaskPath
+  }
+  else {
+    $taskPathWithSlash = $TaskPath + '\'
+  }
+  $targetDisplay = "$taskPathWithSlash$TaskName"
+
+  $registerParams = @{
+    TaskName    = $TaskName
+    TaskPath    = $taskPathWithSlash
+    Action      = $action
+    Principal   = $principal
+    Settings    = $settings
+    Description = $taskDescription
+    Force       = $true
+  }
+  if ($trigger) {
+    $registerParams['Trigger'] = $trigger
+  }
+
+  if (-not $PSCmdlet.ShouldProcess($targetDisplay, 'Register scheduled task')) {
+    return
+  }
+
+  try {
+    $registerParams | Format-Table | Out-String | Write-Host -ForegroundColor DarkGray
+  }
+  catch {
+    Write-Verbose ($registerParams | Out-String)
+  }
+
+  $task = Register-ScheduledTask @registerParams -ErrorAction Stop
+
+  Write-Host "Success! Created Task: '$targetDisplay'" -ForegroundColor Green
+
+  if ($needsBatchWrapper) {
+    Write-Host ''
+    Write-Host 'Note: A batch wrapper was created due to complex/unsafe characters in the script path or arguments.' -ForegroundColor Yellow
+    Write-Host "      Batch file: $batchPath"
+    Write-Host '      The scheduled task runs this .cmd, which in turn calls:' -ForegroundColor Yellow
+    Write-Host "          $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand <base64 script>"
+    Write-Host '      The .cmd file also includes a comment with the decoded PowerShell command' -ForegroundColor Yellow
+    Write-Host '      and a PowerShell one-liner you can use to decode the Base64 payload.' -ForegroundColor Yellow
+  }
+
+  if ($StartItNow) {
+    try {
+      Start-ScheduledTask -TaskPath $taskPathWithSlash -TaskName $TaskName
+      Write-Host 'Task started immediately.' -ForegroundColor Cyan
+    }
+    catch {
+      Write-Error "Task '$taskPathWithSlash$TaskName' was created but failed to start. Error: $_"
+    }
+  }
+
+  Write-Host ''
+  Write-Host 'To remove this task, run:' -ForegroundColor Yellow
+  Write-Host "Unregister-ScheduledTask -TaskPath '$taskPathWithSlash' -TaskName '$TaskName' -Confirm:`$false"
+
+  return $task
 }
 
 
@@ -1351,6 +1662,10 @@ or $null when no version-like token can be identified.
     return $matches[0].ToLowerInvariant()
   }
 
+  if ($Marker -match '(?i)(?:^|[^A-Za-z0-9])(?<Version>\d+\.\d+\.\d+)(?:$|[^A-Za-z0-9])') {
+    return ('v{0}' -f $matches['Version'])
+  }
+
   return $null
 }
 
@@ -1621,6 +1936,8 @@ Hashtable with keys: SourceFullPath, ZipLastWriteTimeIso, CachedZipPath, ZipSha2
     $manualMarker = ("manual-zip|{0}|{1}" -f $requestedVersionToken, $zipHash)
   } elseif ($requestedVersionToken -and ($requestedVersionToken -ine $markerVersionToken)) {
     throw "Provided -Version '$Version' does not match the semver '$markerVersionToken' embedded in zip file name '$($zipItem.Name)'."
+  } else {
+    $manualMarker = ("manual-zip|{0}|{1}" -f $markerVersionToken, $zipHash)
   }
 
   $cacheVersionToken = if ($markerVersionToken) { $markerVersionToken } else { $requestedVersionToken }
@@ -2097,6 +2414,16 @@ $CFG_DIR  = Join-Path $ROOT_DIR 'config'
 $LOG_DIR  = Join-Path $ROOT_DIR 'log'
 $GCH_CONFIG_PATH = Join-Path $CFG_DIR 'gch.psd1'
 $LATEST_RELEASE_METADATA_CACHE_PATH = Join-Path $CFG_DIR 'Get-ComputerHealth-latest-release-meta.json'
+
+if ($ScheduleDailyInvokationAt) {
+  $invokeScriptPath = Join-Path $DEST_DIR 'Invoke-GetComputerHealth.ps1'
+  if (-not (Test-Path -LiteralPath $invokeScriptPath -PathType Leaf)) {
+    throw "Cannot schedule Invoke-GetComputerHealth.ps1 because it was not found at '$invokeScriptPath'."
+  }
+
+  New-ScheduledTaskForPSScript -ScriptPath $invokeScriptPath -ScheduleType Daily -Time $ScheduleDailyInvokationAt
+  return
+}
 
 Start-UpdateTranscript
 try {
