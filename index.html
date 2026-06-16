@@ -419,6 +419,41 @@
               <p class="script-details-text">Accepts either:<br>- A rooted path (e.g. C:\Tools\uchardet or C:\Tools\uchardet.exe), in which case it checks existence and,<br>if no extension was given, also tries common executable extensions (.exe/.cmd/.bat/.com).<br>- A bare command name (e.g. uchardet), in which case it resolves it the same way PowerShell would when<br>launching a process (Get-Command + PATHEXT).<br>Returns $true if the executable can be found, otherwise $false.</p>
             </details>
           </div>
+          <div class="function-entry">
+            <p class="function-name"><strong>Get-TopRamProcess</strong></p>
+            <p class="function-synopsis">Returns the processes consuming the most resident physical memory.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Returns at least MinProcesses processes, ordered by working-set size.</p>
+              <p class="script-details-text">Processes continue to be included until their combined working sets reach<br>TargetPercentOfUsedRam percent of currently used physical RAM, or until<br>MaxProcesses processes have been included.</p>
+              <p class="script-details-text">Command lines are excluded by default because retrieving them requires an<br>additional CIM/WMI query. Use IncludeCommandLine when they are required.</p>
+              <p class="script-details-text">.PARAMETER MinProcesses<br>Minimum number of processes to return.</p>
+              <p class="script-details-text">The default is 10.</p>
+              <p class="script-details-text">.PARAMETER MaxProcesses<br>Maximum number of processes to return, even when the requested RAM target<br>has not been reached.</p>
+              <p class="script-details-text">MaxProcesses cannot be less than MinProcesses.</p>
+              <p class="script-details-text">The default is 100.</p>
+              <p class="script-details-text">.PARAMETER TargetPercentOfUsedRam<br>Target percentage of currently used physical RAM to cover with the<br>cumulative working sets of the returned processes.</p>
+              <p class="script-details-text">This is a target rather than an exact limit. The final process is included<br>in full, so the reported cumulative percentage normally exceeds the<br>requested percentage slightly.</p>
+              <p class="script-details-text">The default is 25.</p>
+              <p class="script-details-text">.PARAMETER IncludeCommandLine<br>Retrieves and returns the command line for each selected process.</p>
+              <p class="script-details-text">This requires an additional CIM/WMI query and therefore adds work on an<br>already stressed system. Command lines may also expose passwords, tokens,<br>connection strings, or other sensitive values.</p>
+              <p class="script-details-text">Some command lines may be unavailable because of permissions, protected<br>processes, or processes terminating during collection.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>PSCustomObject with the following properties:</p>
+              <p class="script-details-text">PID<br>Name<br>RAM_MB<br>RAM_PercentOfTotal<br>RAM_PercentOfUsed<br>CumulativeUsedRAMPct<br>CommandLine</p>
+              <p class="script-details-text">CommandLine is null unless IncludeCommandLine is specified.</p>
+              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>RAM usage is based on each process&#x27;s working set. A working set represents<br>physical pages currently resident for that process, but it can contain<br>shared pages such as DLL code. Summing process working sets can therefore<br>count the same physical pages more than once. CumulativeUsedRAMPct is an<br>approximate diagnostic value and can exceed 100 percent.</p>
+              <p class="script-details-text">Not all used physical RAM belongs to user-visible processes. Kernel pools,<br>drivers, the file cache, modified pages, memory compression, and other<br>operating-system allocations may consume substantial memory. The requested<br>target may therefore be unreachable even when every process is considered.</p>
+              <p class="script-details-text">Process state can change during collection. A process may terminate after<br>it is enumerated, and Windows could theoretically reuse its PID before the<br>optional command-line query. Such races cannot be eliminated by a snapshot<br>function.</p>
+              <p class="script-details-text">The function creates and sorts a small object for every process before<br>selecting the result set. This is normally minor, but its cost increases on<br>systems running unusually large numbers of processes.</p>
+              <p class="script-details-text">When IncludeCommandLine is used, the additional CIM/WMI query consumes more<br>CPU and memory and may involve provider activity at a time when the system<br>is already under pressure.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-TopRamProcess</p>
+              <p class="script-details-text">Returns at least 10 processes and continues until their combined working<br>sets approximately cover 25 percent of currently used RAM, up to a maximum<br>of 100 processes.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-TopRamProcess -MinProcesses 5 -MaxProcesses 50 `<br>-TargetPercentOfUsedRam 40</p>
+              <p class="script-details-text">Returns at least 5 and at most 50 processes, targeting approximately<br>40 percent of currently used RAM.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-TopRamProcess -IncludeCommandLine</p>
+              <p class="script-details-text">Includes process command lines using an additional CIM/WMI query.</p>
+            </details>
+          </div>
           </div>
         </details>
       </li>
@@ -538,6 +573,13 @@
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Install-PrepLapCode.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Install-PrepLapCode.ps1" aria-label="Copy download command for Install-PrepLapCode.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
           <p class="script-synopsis">Only relevant to mazars (Install/Update mazars-prepare-laptop-code)</p>
+      </li>
+      <li class="script-item">
+        <div class="script-header">
+          <a class="script-link" href="Invoke-EnableBitLockerForDriveC.ps1">Invoke-EnableBitLockerForDriveC.ps1</a>
+          <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Invoke-EnableBitLockerForDriveC.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Invoke-EnableBitLockerForDriveC.ps1" aria-label="Copy download command for Invoke-EnableBitLockerForDriveC.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
+        </div>
+          <p class="script-synopsis">Requires -Version 5.1<br>Requires -RunAsAdministrator</p>
       </li>
       <li class="script-item">
         <div class="script-header">
@@ -680,9 +722,11 @@
           <p class="script-details-text">.PARAMETER PersistReleaseMarker<br>Internal use only. Carries the resolved release marker across self-rerun.</p>
           <p class="script-details-text">.PARAMETER Config<br>Optional installer customization. Pass either a hashtable or the path to a PowerShell data file.<br>The top-level Options branch changes installer behavior. The top-level ConfigFiles branch<br>creates PowerShell data files under the installation config directory.</p>
           <p class="script-details-text">.PARAMETER GenerateConfigPsd1<br>Creates a template PowerShell data file named GetComputerHealth.install.psd1 in the current<br>working directory, then exits. Customize that file and pass its path to -Config.</p>
+          <p class="script-details-text">.PARAMETER ScheduleDailyInvokationAt<br>Creates or updates a daily scheduled task for Invoke-GetComputerHealth.ps1<br>at the specified 24-hour time in HH:mm format, then exits.</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Update-GetHealthCode.ps1</p>
           <p class="script-details-text">Checks the locally cached latest-release metadata, refreshes it from<br>GitHub when needed, and installs the latest published release when it is<br>newer than the currently installed release marker.</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Update-GetHealthCode.ps1 -UpdateFromZip C:\Downloads\GetComputerHealth-v4.4.3.zip</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Update-GetHealthCode.ps1 -ScheduleDailyInvokationAt 07:12</p>
         </details>
       </li>
       <li class="script-item">
@@ -760,7 +804,7 @@
       Source repository:
       <a href="https://github.com/ndemou/scripts">github.com/ndemou/scripts</a>
     </p>
-    <p class="footer">Last updated at 2026-06-13 07:58 UTC</p>
+    <p class="footer">Last updated at 2026-06-16 07:11 UTC</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {
