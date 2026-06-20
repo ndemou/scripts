@@ -871,7 +871,8 @@ function Get-TopRamProcess {
 
     Processes continue to be included until their combined working sets reach
     TargetPercentOfUsedRam percent of currently used physical RAM, or until
-    MaxProcesses processes have been included.
+    MaxProcesses processes have been included. Estimated non-process RAM is
+    included in the ranking as a synthetic entry named [non-process].
 
     Command lines are excluded by default because retrieving them requires an
     additional CIM/WMI query. Use IncludeCommandLine when they are required.
@@ -930,9 +931,16 @@ function Get-TopRamProcess {
     approximate diagnostic value and can exceed 100 percent.
 
     Not all used physical RAM belongs to user-visible processes. Kernel pools,
-    drivers, the file cache, modified pages, memory compression, and other
-    operating-system allocations may consume substantial memory. The requested
-    target may therefore be unreachable even when every process is considered.
+    drivers, the file cache, modified pages, memory compression, Hyper-V guest
+    memory, and other operating-system allocations may consume substantial
+    memory. The function estimates that gap as:
+
+      used physical RAM minus the summed working sets of all readable
+      processes
+
+    The estimate is exposed as the synthetic [non-process] entry. When summed
+    working sets exceed used RAM because of shared pages, the synthetic entry
+    is reported as zero.
 
     Process state can change during collection. A process may terminate after
     it is enumerated, and Windows could theoretically reuse its PID before the
@@ -950,9 +958,9 @@ function Get-TopRamProcess {
     .EXAMPLE
     Get-TopRamProcess
 
-    Returns at least 10 processes and continues until their combined working
-    sets approximately cover 25 percent of currently used RAM, up to a maximum
-    of 100 processes.
+    Returns at least 10 entries and continues until their combined RAM usage
+    approximately covers 25 percent of currently used RAM, up to a maximum of
+    100 entries. The ranking may include the synthetic [non-process] entry.
 
     .EXAMPLE
     Get-TopRamProcess -MinProcesses 5 -MaxProcesses 50 `
@@ -1039,6 +1047,30 @@ function Get-TopRamProcess {
             Sort-Object -Property RamBytes -Descending
     )
 
+    $summedProcessRamBytes = (
+        $processes |
+            Measure-Object -Property RamBytes -Sum
+    ).Sum
+
+    if ($null -eq $summedProcessRamBytes) {
+        $summedProcessRamBytes = 0.0
+    }
+
+    $nonProcessRamBytes = $usedRamBytes - [double]$summedProcessRamBytes
+
+    if ($nonProcessRamBytes -lt 0) {
+        $nonProcessRamBytes = 0.0
+    }
+
+    $processes = @(
+        $processes + [pscustomobject]@{
+            PID      = -1
+            Name     = '[non-process]'
+            RamBytes = [int64][math]::Round($nonProcessRamBytes)
+        } |
+            Sort-Object -Property RamBytes -Descending
+    )
+
     if ($unreadableProcessCount -gt 0) {
         Write-Verbose (
             "$unreadableProcessCount process(es) exited or could not be read."
@@ -1099,11 +1131,11 @@ function Get-TopRamProcess {
             0
         }
 
-        Write-Warning (
+        Write-Verbose (
             'The approximate target was not reached. ' +
-            "Returned $($selected.Count) process(es), covering " +
-            "$([math]::Round($coveredPercent, 1))% of used RAM by summed " +
-            'working set. Non-process memory or MaxProcesses may be the cause.'
+            "Returned $($selected.Count) entr$(if ($selected.Count -eq 1) { 'y' } else { 'ies' }), covering " +
+            "$([math]::Round($coveredPercent, 1))% of used RAM by measured " +
+            'RAM usage. MaxProcesses may be the cause.'
         )
     }
 
