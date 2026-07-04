@@ -425,7 +425,7 @@
             <details class="script-details function-details">
               <summary>Read more</summary>
               <p class="script-details-text">Returns at least MinProcesses processes, ordered by working-set size.</p>
-              <p class="script-details-text">Processes continue to be included until their combined working sets reach<br>TargetPercentOfUsedRam percent of currently used physical RAM, or until<br>MaxProcesses processes have been included.</p>
+              <p class="script-details-text">Processes continue to be included until their combined working sets reach<br>TargetPercentOfUsedRam percent of currently used physical RAM, or until<br>MaxProcesses processes have been included. Estimated non-process RAM is<br>included in the ranking as a synthetic entry named [non-process].</p>
               <p class="script-details-text">Command lines are excluded by default because retrieving them requires an<br>additional CIM/WMI query. Use IncludeCommandLine when they are required.</p>
               <p class="script-details-text">.PARAMETER MinProcesses<br>Minimum number of processes to return.</p>
               <p class="script-details-text">The default is 10.</p>
@@ -442,12 +442,14 @@
               <p class="script-details-text">PID<br>Name<br>RAM_MB<br>RAM_PercentOfTotal<br>RAM_PercentOfUsed<br>CumulativeUsedRAMPct<br>CommandLine</p>
               <p class="script-details-text">CommandLine is null unless IncludeCommandLine is specified.</p>
               <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>RAM usage is based on each process&#x27;s working set. A working set represents<br>physical pages currently resident for that process, but it can contain<br>shared pages such as DLL code. Summing process working sets can therefore<br>count the same physical pages more than once. CumulativeUsedRAMPct is an<br>approximate diagnostic value and can exceed 100 percent.</p>
-              <p class="script-details-text">Not all used physical RAM belongs to user-visible processes. Kernel pools,<br>drivers, the file cache, modified pages, memory compression, and other<br>operating-system allocations may consume substantial memory. The requested<br>target may therefore be unreachable even when every process is considered.</p>
+              <p class="script-details-text">Not all used physical RAM belongs to user-visible processes. Kernel pools,<br>drivers, the file cache, modified pages, memory compression, Hyper-V guest<br>memory, and other operating-system allocations may consume substantial<br>memory. The function estimates that gap as:</p>
+              <p class="script-details-text">used physical RAM minus the summed working sets of all readable<br>processes</p>
+              <p class="script-details-text">The estimate is exposed as the synthetic [non-process] entry. When summed<br>working sets exceed used RAM because of shared pages, the synthetic entry<br>is reported as zero.</p>
               <p class="script-details-text">Process state can change during collection. A process may terminate after<br>it is enumerated, and Windows could theoretically reuse its PID before the<br>optional command-line query. Such races cannot be eliminated by a snapshot<br>function.</p>
               <p class="script-details-text">The function creates and sorts a small object for every process before<br>selecting the result set. This is normally minor, but its cost increases on<br>systems running unusually large numbers of processes.</p>
               <p class="script-details-text">When IncludeCommandLine is used, the additional CIM/WMI query consumes more<br>CPU and memory and may involve provider activity at a time when the system<br>is already under pressure.</p>
               <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-TopRamProcess</p>
-              <p class="script-details-text">Returns at least 10 processes and continues until their combined working<br>sets approximately cover 25 percent of currently used RAM, up to a maximum<br>of 100 processes.</p>
+              <p class="script-details-text">Returns at least 10 entries and continues until their combined RAM usage<br>approximately covers 25 percent of currently used RAM, up to a maximum of<br>100 entries. The ranking may include the synthetic [non-process] entry.</p>
               <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-TopRamProcess -MinProcesses 5 -MaxProcesses 50 `<br>-TargetPercentOfUsedRam 40</p>
               <p class="script-details-text">Returns at least 5 and at most 50 processes, targeting approximately<br>40 percent of currently used RAM.</p>
               <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-TopRamProcess -IncludeCommandLine</p>
@@ -804,7 +806,7 @@
       Source repository:
       <a href="https://github.com/ndemou/scripts">github.com/ndemou/scripts</a>
     </p>
-    <p class="footer">Last updated at 2026-06-16 13:12 UTC</p>
+    <p class="footer">Last updated at 2026-07-04 10:59 UTC</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {

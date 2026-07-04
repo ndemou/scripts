@@ -5,8 +5,9 @@ Runs all local tests and rebuilds index.html when they pass.
 .DESCRIPTION
 This is the publish step for this repository's static script index, not a
 GitHub Release workflow. It executes every PowerShell test script under
-.\tests\ and stops on the first failure. If all tests pass, it runs
-python .\build_index.py to regenerate index.html.
+.\tests\ and stops on the first failure. It also runs Python unittest
+discovery for tests\test_*.py. If all tests pass, it runs python
+.\build_index.py to regenerate index.html.
 #>
 
 [CmdletBinding()]
@@ -41,6 +42,12 @@ try {
     if ($LASTEXITCODE -ne 0) {
       throw "Test script failed with exit code ${LASTEXITCODE}: $relativePath"
     }
+  }
+
+  Write-Host "Running Python unit tests" -ForegroundColor Cyan
+  & python -m unittest discover -s $testsRoot -p 'test_*.py'
+  if ($LASTEXITCODE -ne 0) {
+    throw "Python unit tests failed with exit code $LASTEXITCODE"
   }
 
   Write-Host "Running build_index.py" -ForegroundColor Cyan

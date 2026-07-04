@@ -723,7 +723,8 @@ function Get-WindowsUpdateHistory {
     [int]$MaxResults = 30,
     [int]$LastDays,
     [switch]$IncludeAV,
-    [int]$MaxScanEntries = 10000
+    [int]$MaxScanEntries = 10000,
+    [object]$Searcher
   )
 
   function _OpText([int]$op) {
@@ -746,18 +747,21 @@ function Get-WindowsUpdateHistory {
   $scanned = 0
   $collected = New-Object System.Collections.Generic.List[object]
 
-  $s = New-Object -ComObject Microsoft.Update.Session
-  $searcher = $s.CreateUpdateSearcher()
+  if ($null -eq $Searcher) {
+    $s = New-Object -ComObject Microsoft.Update.Session
+    $Searcher = $s.CreateUpdateSearcher()
+  }
 
   while ($scanned -lt $MaxScanEntries) {
     $remaining = $MaxScanEntries - $scanned
     $take = if ($remaining -lt $batchSize) { $remaining } else { $batchSize }
 
-    $batch = $searcher.QueryHistory($start, $take)
+    $batch = $Searcher.QueryHistory($start, $take)
     if (-not $batch -or $batch.Count -eq 0) { break }
+    $returnedCount = $batch.Count
 
-    $scanned += $batch.Count
-    $start += $batch.Count
+    $scanned += $returnedCount
+    $start += $returnedCount
 
     if ($cut) {
       $batch = $batch | Where-Object { $_.Date -ge $cut }
@@ -772,11 +776,11 @@ function Get-WindowsUpdateHistory {
     if ($MaxResults -gt 0 -and $collected.Count -ge $MaxResults) { break }
 
     if ($cut) {
-      $oldestInReturned = ($searcher.QueryHistory($start-1,1) | Select-Object -First 1).Date
+      $oldestInReturned = ($Searcher.QueryHistory($start-1,1) | Select-Object -First 1).Date
       if ($oldestInReturned -and $oldestInReturned -lt $cut) { break }
     }
 
-    if ($batch.Count -lt $take) { break }
+    if ($returnedCount -lt $take) { break }
   }
 
   $final = $collected

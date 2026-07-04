@@ -16,6 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\release\Publish-NewRelease
 That script:
 
 - runs all PowerShell test scripts under `.\tests\`
+- runs Python unit tests under `.\tests\`
 - stops immediately if any test fails
 - runs `python .\build_index.py` only after all tests pass
 
