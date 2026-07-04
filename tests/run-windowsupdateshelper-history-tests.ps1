@@ -197,6 +197,20 @@ $tests = @(
       Assert-Equal $rows.Count 1 'Expected only the recent non-Defender row.'
       Assert-Equal $rows[0].KB 'KB5099999' 'Unexpected KB returned for LastDays filtering.'
     }
+  },
+  @{
+    Name = 'Startup diagnostic output is only shown with Debug'
+    Body = {
+      $normalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath -ListRecentLogs *>&1 | Out-String
+      $debugOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath -ListRecentLogs -Debug *>&1 | Out-String
+
+      Assert-True (-not ($normalOutput -match 'Logging to file:')) 'Did not expect transcript path output without -Debug.'
+      Assert-True (-not ($normalOutput -match 'Debug: Command:')) 'Did not expect command diagnostics without -Debug.'
+      Assert-True (-not ($normalOutput -match 'Debug: Arguments:')) 'Did not expect argument diagnostics without -Debug.'
+      Assert-True ($debugOutput -match 'Logging to file:') 'Expected transcript path output with -Debug.'
+      Assert-True ($debugOutput -match 'Debug: Command:') 'Expected command diagnostics with -Debug.'
+      Assert-True ($debugOutput -match 'Debug: Arguments:') 'Expected argument diagnostics with -Debug.'
+    }
   }
 )
 

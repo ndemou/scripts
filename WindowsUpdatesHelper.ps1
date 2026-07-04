@@ -254,6 +254,7 @@ function Write-DbgDump {
   [int]$Depth=20,
   [switch]$Json
   )
+  if (-not $script:WuDebugOutputEnabled) { return }
   try {
       if ($null -eq $Obj) {
         Write-Host "`n-----DEBUG $Label = `$null -----" -ForegroundColor Cyan
@@ -323,7 +324,7 @@ PSCustomObject with properties:
 #>
 function Start-WuTranscript {
     [CmdletBinding()]
-    param()
+    param([switch]$EmitStatus)
 
     $logRoot = if (Test-Path 'C:\IT\LOG') { 'C:\IT\LOG' } elseif (Test-Path 'C:\IT\LOGS') { 'C:\IT\LOGS' } else { [System.IO.Path]::GetTempPath().TrimEnd('\') }
     $logName = 'WindowsUpdateHelper-{0}.log' -f (Get-Date -Format 'yyyy-MM-dd_HH.mm.ss')
@@ -333,7 +334,7 @@ function Start-WuTranscript {
     try {
         Start-Transcript -Path $LogFile -Force | Out-Null
         $enabled = $true
-        Write-Host "Logging to file: $LogFile"
+        if ($EmitStatus) { Write-Host "Logging to file: $LogFile" }
     } catch {
         Write-Host -ForegroundColor Yellow ("WARNING: Failed to start transcript at '{0}'. Error: {1}" -f $LogFile, $_.Exception.Message)
 
@@ -344,7 +345,7 @@ function Start-WuTranscript {
                 Start-Transcript -Path $fallbackFile -Append -Force | Out-Null
                 $LogFile = $fallbackFile
                 $enabled = $true
-                Write-Host -ForegroundColor Yellow ("WARNING: Using fallback log file: {0}" -f $LogFile)
+                if ($EmitStatus) { Write-Host -ForegroundColor Yellow ("WARNING: Using fallback log file: {0}" -f $LogFile) }
             } catch {
                 Write-Host -ForegroundColor Yellow ("WARNING: Failed to start transcript fallback at '{0}'. Error: {1}" -f $fallbackFile, $_.Exception.Message)
             }
@@ -2001,16 +2002,19 @@ function Invoke-InstallPhase {
 # -------------------------------------------------------------------------------------------------
 
 # ----- Logging / transcript -----
-$script:TranscriptEnabled = (Start-WuTranscript).TranscriptEnabled
-Write-Host "Degug: Command: $($MyInvocation.Line)" -ForegroundColor DarkGray
-Write-Host "Degug: Arguments:" -ForegroundColor DarkGray
-$MyInvocation.BoundParameters.GetEnumerator() |
-  Sort-Object Key |
-  ForEach-Object{
-    Write-Host ("  -{0} = {1}" -f $_.Key,$_.Value) -ForegroundColor DarkGray
+$script:WuDebugOutputEnabled = ($PSBoundParameters.ContainsKey('Debug') -and [bool]$PSBoundParameters['Debug'])
+$script:TranscriptEnabled = (Start-WuTranscript -EmitStatus:$script:WuDebugOutputEnabled).TranscriptEnabled
+if ($script:WuDebugOutputEnabled) {
+  Write-Host "Debug: Command: $($MyInvocation.Line)" -ForegroundColor DarkGray
+  Write-Host "Debug: Arguments:" -ForegroundColor DarkGray
+  $MyInvocation.BoundParameters.GetEnumerator() |
+    Sort-Object Key |
+    ForEach-Object{
+      Write-Host ("  -{0} = {1}" -f $_.Key,$_.Value) -ForegroundColor DarkGray
+    }
+  for($i=0;$i -lt $args.Count;$i++){
+    Write-Host ("  args[{0}] = {1}" -f $i,$args[$i]) -ForegroundColor DarkGray
   }
-for($i=0;$i -lt $args.Count;$i++){
-  Write-Host ("  args[{0}] = {1}" -f $i,$args[$i]) -ForegroundColor DarkGray
 }
 
 # Cleanup forced reboot Scheduled Task if any (see calls to Schedule-ForcedReboot)
