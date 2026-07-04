@@ -5,6 +5,48 @@ import build_index
 
 
 class BuildIndexTests(unittest.TestCase):
+    def test_publishable_script_discovery_matches_standalone_repo_contract(self) -> None:
+        paths = {
+            path.relative_to(build_index.ROOT).as_posix()
+            for path in build_index.ROOT.rglob("*")
+            if build_index.is_publishable_script(path)
+        }
+
+        self.assertIn("WindowsUpdatesHelper.ps1", paths)
+        self.assertIn("helpers-text-files.ps1", paths)
+        self.assertNotIn("release/Publish-NewRelease.ps1", paths)
+        self.assertNotIn("tests/run-edit-textfile-tests.ps1", paths)
+
+    def test_every_publishable_script_has_indexable_synopsis(self) -> None:
+        docs = [
+            build_index.read_script_doc(path)
+            for path in build_index.ROOT.rglob("*")
+            if build_index.is_publishable_script(path)
+        ]
+
+        missing = [
+            doc.path.relative_to(build_index.ROOT).as_posix()
+            for doc in docs
+            if not doc.synopsis
+        ]
+
+        self.assertEqual(missing, [])
+
+    def test_helper_function_containers_expose_function_docs(self) -> None:
+        helper_docs = [
+            build_index.read_script_doc(path)
+            for path in build_index.ROOT.glob("helpers-*.ps1")
+        ]
+
+        self.assertGreater(len(helper_docs), 0)
+        missing_function_docs = [
+            doc.path.name
+            for doc in helper_docs
+            if not doc.function_docs
+        ]
+
+        self.assertEqual(missing_function_docs, [])
+
     def test_extract_comment_block_accepts_utf8_bom_prefixed_ps1_block(self) -> None:
         text = "\ufeff<#\n.SYNOPSIS\nA collection of helper functions for handling files\n#>\n"
 
