@@ -101,6 +101,7 @@ $tests = @(
 
       Assert-True ($testScripts.Count -ge 3) 'Expected focused PowerShell test harnesses under tests.'
       Assert-Equal @($testScripts | Where-Object Name -eq 'run-repository-script-contract-tests.ps1').Count 1 'Expected this contract test to be discoverable by the release gate.'
+      Assert-Equal @($testScripts | Where-Object Name -eq 'run-get-textfileencoding-tests.ps1').Count 1 'Expected Get-TextFileEncoding tests to be discoverable by the release gate.'
     }
   }
 )
