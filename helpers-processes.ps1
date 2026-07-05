@@ -58,6 +58,55 @@ function Join-Win32CommandLine {
   (($ArgumentList | ForEach-Object { Quote-Win32Arg ([string]$_) }) -join ' ')
 }
 
+<#
+.SYNOPSIS
+Escapes a value as a PowerShell single-quoted string literal.
+#>
+function ConvertTo-PowerShellSingleQuotedString {
+  param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+  "'$($Value -replace "'", "''")'"
+}
+
+<#
+.SYNOPSIS
+Encodes PowerShell source text for powershell.exe -EncodedCommand.
+#>
+function ConvertTo-PowerShellEncodedCommand {
+  param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Command)
+  [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command))
+}
+
+<#
+.SYNOPSIS
+Builds the remote powershell.exe command line for Invoke-DetachedPSScript.
+#>
+function New-DetachedPSScriptRemoteCommandLine {
+  param(
+    [Parameter(Mandatory = $true)][string]$PowerShellPath,
+    [Parameter(Mandatory = $true)][string]$RemoteScriptPath,
+    [string]$LogFile
+  )
+
+  $baseArguments = @(
+    $PowerShellPath,
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass'
+  )
+
+  if ([string]::IsNullOrWhiteSpace($LogFile)) {
+    return Join-Win32CommandLine -ArgumentList ($baseArguments + @('-File', $RemoteScriptPath))
+  }
+
+  $logFileLiteral = ConvertTo-PowerShellSingleQuotedString -Value $LogFile
+  $remoteScriptLiteral = ConvertTo-PowerShellSingleQuotedString -Value $RemoteScriptPath
+  $command = "Start-Transcript -Path $logFileLiteral -Append -Force; try { & $remoteScriptLiteral } finally { Stop-Transcript }"
+  $encodedCommand = ConvertTo-PowerShellEncodedCommand -Command $command
+
+  Join-Win32CommandLine -ArgumentList ($baseArguments + @('-EncodedCommand', $encodedCommand))
+}
+
 function New-ScheduledTaskForPSScript {
   <#
 .SYNOPSIS
@@ -755,12 +804,10 @@ ComputerName, ProcessId, ReturnValue, Status, and ExecutionPath.
 
         $psPath = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
-        if ([string]::IsNullOrWhiteSpace($LogFile)) {
-            $cmd = "`"$psPath`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$remoteScriptPath`""
-        }
-        else {
-            $cmd = "`"$psPath`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command `"Start-Transcript -Path '$LogFile' -Append -Force; try { & '$remoteScriptPath' } finally { Stop-Transcript }`""
-        }
+        $cmd = New-DetachedPSScriptRemoteCommandLine `
+            -PowerShellPath $psPath `
+            -RemoteScriptPath $remoteScriptPath `
+            -LogFile $LogFile
 
         Write-Verbose "Executing command via WMI: $cmd"
 
