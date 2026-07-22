@@ -669,6 +669,24 @@
       </li>
       <li class="script-item">
         <div class="script-header">
+          <a class="script-link" href="Send-Message.ps1">Send-Message.ps1</a>
+          <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Send-Message.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Send-Message.ps1" aria-label="Copy download command for Send-Message.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
+        </div>
+          <p class="script-synopsis">Sends an email alert using SMTP settings stored in a JSON config file.</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <p class="script-details-text">Normal Operation</p>
+          <p class="script-details-text">Required parameters:<br>- Subject<br>- ConfigFile</p>
+          <p class="script-details-text">Optional parameters:<br>- Body<br>- Attachments<br>- BodyAsHtml</p>
+          <p class="script-details-text">Behavior:<br>- Supports -WhatIf / -Confirm (ShouldProcess).<br>- Validates config and attachment paths before sending.</p>
+          <p class="script-details-text">First time run/configuration</p>
+          <p class="script-details-text">To configure it run it like this:<br>&amp; C:\it\bin\Send-Message.ps1 -GenerateConfig c:\it\config\Send-Message.conf<br>It will interactively create a new JSON config file at the specified path.</p>
+          <p class="script-details-text">Config file keys:<br>Server, From, To (required)<br>Port   (default: 25)<br>UseSsl (default: false)</p>
+          <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>- Send-MailMessage is obsolete (shows a warning), but still works in many environments.<br>- If UseSsl=true, STARTTLS will be attempted. This can fail if the SMTP certificate is invalid.</p>
+        </details>
+      </li>
+      <li class="script-item">
+        <div class="script-header">
           <a class="script-link" href="Start-Copy4Toula.ps1">Start-Copy4Toula.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Start-Copy4Toula.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Start-Copy4Toula.ps1" aria-label="Copy download command for Start-Copy4Toula.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
@@ -818,7 +836,7 @@
       Source repository:
       <a href="https://github.com/ndemou/scripts">github.com/ndemou/scripts</a>
     </p>
-    <p class="footer">Last updated at 2026-07-05 19:47 UTC</p>
+    <p class="footer">Last updated at 2026-07-22 07:56 UTC</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {
