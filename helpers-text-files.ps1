@@ -936,8 +936,8 @@ Offer help on how to install uchardet if not found.
     # Step 1 - Resolve + validate the input path (file exists, not a directory)
     write-verbose $Path
     $file = Resolve-FileFromPath -Path $Path
-    write-verbose $file.FullName
     if ($null -eq $file) { $totalSw.Stop(); return }
+    write-verbose $file.FullName
 
     if ($file.Length -eq 0) {
       $totalSw.Stop()
@@ -1015,7 +1015,7 @@ Offer help on how to install uchardet if not found.
                 $encoding = $dgaeEncoding
                 $preferIsoEffective = $true
               } else {
-                if ($UchardetPath) {$comment = "Are you sure it's at $UchardetPath?"} else {$comment = "Are you sure it's in the path?"}
+                if ($UchardetPath) {$comment = "Are you sure it's at ${UchardetPath}?"} else {$comment = "Are you sure it's in the path?"}
                 _Write-FunctionError -Message ("uchardet was not found. Is it installed? $comment") -Category $cat -TargetObject $file.FullName
               }
             } else {
