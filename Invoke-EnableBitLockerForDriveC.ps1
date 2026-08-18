@@ -1,737 +1,1456 @@
 ﻿#Requires -Version 5.1
 #Requires -RunAsAdministrator
-
 <#
 .SYNOPSIS
-    Enable or maintain BitLocker on operating-system volume C: and
-    escrow its recovery key to AD DS and Microsoft Entra ID.
+Enables or maintains BitLocker protection for C: and submits each
+recovery-password protector to AD DS and Microsoft Entra ID.
 
 .DESCRIPTION
-    Run this script locally and elevated on a Windows 11 laptop to
-    bring drive C: into a protected BitLocker state. It targets C:
-    only and is safe to run repeatedly.
+Use this script on a Windows 11 computer when the operating-system
+volume must be BitLocker protected and its recovery password must be
+stored in at least one of the computer's configured directories.
 
-    Elevation is required. A Domain Admin account is not required and
-    is not recommended; a local administrator or Windows LAPS
-    administrator account is sufficient.
+The script requires an elevated Windows PowerShell 5.1 session. A
+Domain Admin account is neither required nor recommended. The script
+targets C: only. It attempts recovery-key submission to each eligible
+directory (AD DS, Microsoft Entra ID, or both) and treats the operation
+as successful only when at least one submission succeeds and the local
+BitLocker state passes its final checks.
 
-    The script ensures a recovery-password protector exists, submits
-    every recovery-password protector to on-premises AD DS and to
-    Microsoft Entra ID, then enables or maintains encryption on C:
-    using an existing or newly added startup protector.
+The script may create a recovery-password protector, add a TPM
+protector when no supported boot protector exists, start or resume
+encryption, and resume suspended BitLocker protection. Existing
+recovery and boot protectors are retained.
 
-    The run succeeds only when all of the following hold: C: is
-    encrypted, encrypting, or validly pending the startup hardware
-    test; a recovery-password protector exists; at least one
-    recovery-password submission was accepted by AD DS or by Microsoft
-    Entra ID; and the final local BitLocker state passes validation.
-    If neither directory accepts a recovery key, the script throws.
+By default, a BitLocker hardware test is requested. Encryption may
+therefore remain pending until Windows is restarted and the test
+succeeds. UsedSpaceOnly and SkipHardwareTest change this behavior as
+described below.
 
-    The script may create a recovery protector, add a TPM startup
-    protector, start encryption, and resume encryption or protection.
-    Existing protectors are always retained and never weakened. A
-    restart may be required before encryption begins.
+A terminating error can leave externally visible state partially
+updated. For example, a recovery protector or directory recovery
+record may exist even if encryption is not started or later validation
+fails. The script does not remove protectors or recovery records that
+it created or submitted.
 
-    Successful completion of a backup command is treated as an
-    accepted submission. The script does not independently read the
-    recovery key back from AD DS or Microsoft Entra ID; read-back
-    verification needs separate directory permissions and tooling.
+A successful directory submission means Windows accepted the backup
+request. The script does not read the recovery password back from AD DS
+or Microsoft Entra ID. Verify directory visibility separately when
+operational policy requires end-to-end confirmation.
 
-    The script performs no destructive cleanup. A terminating error
-    may leave partial external state in place, such as a new recovery
-    protector, a recovery record already submitted to one directory,
-    encryption already started, or protection already resumed. That
-    state is intentionally left untouched.
+When it creates a recovery-password protector, the script suppresses
+the warning stream from Add-BitLockerKeyProtector so the 48-digit
+password is not written to the console or a transcript by that cmdlet.
+The script never intentionally prints or returns the recovery password.
 
-.OUTPUTS
-    On success, a single PSCustomObject is returned with fields:
+Do not use this script while C: is being decrypted, or where another
+full-disk encryption product is active. Review applicable Group Policy
+and Intune BitLocker settings before use because policy can reject or
+alter the requested configuration.
 
-        Succeeded                   Always True on success.
-        MountPoint                  The target volume, C:.
-        VolumeStatus                Final local conversion state.
-        ProtectionStatus            Final local protection state.
-        EncryptionPercentage        Final local percentage.
-        EncryptionMethod            Final local encryption method.
-        RecoveryProtectorIds        Recovery-password protector IDs.
-        EscrowedToActiveDirectory   True if an AD DS submission
-                                    succeeded during this run.
-        EscrowedToMicrosoftEntraId  True if an Entra submission
-                                    succeeded during this run.
-        RebootRequired              True only when a restart is needed
-                                    for the requested hardware test.
-
-    The 48-digit recovery password is never printed or returned.
+On failure, writes warnings as applicable and raises a terminating
+error. No success object is produced.
 
 .PARAMETER EncryptionMethod
-    Requested method: Aes128, Aes256, XtsAes128, or XtsAes256.
-    Defaults to XtsAes256. If an operating-system drive encryption
-    policy requires a different method, the policy method is used and
-    reported instead of the requested method.
+Specifies the requested BitLocker encryption method. Applied policy may
+require a different supported method, which the script reports and
+uses.
 
 .PARAMETER UsedSpaceOnly
-    Encrypt only used space during the initial conversion. Free space
-    that may hold remnants of deleted data is not covered until it is
-    reused. When omitted, full-volume encryption is requested.
+When set, requests encryption of allocated disk space only; otherwise,
+requests encryption of the entire volume. Use this mainly for new or
+recently prepared systems where unallocated space has not held
+sensitive data.
 
 .PARAMETER SkipHardwareTest
-    Skip the BitLocker startup hardware test so encryption begins
-    immediately, bypassing preboot validation. When omitted, the
-    hardware test is requested and C: may stay decrypted until the
-    next restart.
-
-.EXAMPLE
-    $r = .\Invoke-EnableBitLockerForDriveC.ps1
-    if ($r.RebootRequired) { Restart-Computer }
-
-    Configure C:, then restart only when a restart is required for the
-    pending hardware test.
+When set, requests encryption without the BitLocker startup hardware
+test; otherwise, a restart may be required before encryption begins.
+Use only when bypassing the preboot validation is acceptable.
 #>
 
 [CmdletBinding()]
-[OutputType([pscustomobject])]
 param(
     [ValidateSet('Aes128', 'Aes256', 'XtsAes128', 'XtsAes256')]
     [string]$EncryptionMethod = 'XtsAes256',
-
+    [string]$MountPoint = 'C:',
     [switch]$UsedSpaceOnly,
-
     [switch]$SkipHardwareTest
 )
-
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-
-# -DisableNameChecking suppresses only the module's unapproved-verb
-# warning (for example BackupToAAD-BitLockerKeyProtector); it does not
-# suppress unrelated warnings.
-Import-Module BitLocker -DisableNameChecking -ErrorAction Stop
-
-# --------------------------------------------------------------------
-# Presentation helpers (Write-Host only; never the success stream)
-# --------------------------------------------------------------------
-
-function Write-Section {
-    param([string]$Title)
-    Write-Host ''
-    Write-Host ('  ' + $Title) -ForegroundColor White
-    Write-Host ('  ' + ('-' * 64)) -ForegroundColor DarkGray
-    Write-Host ''
-}
-
-function Write-Field {
+$UiRuleWidth = 64
+function Write-Step {
     param(
-        [string]$Label,
-        [string]$Value
-    )
-    $padded = ($Label + ':').PadRight(26)
-    Write-Host ('  ' + $padded) -ForegroundColor DarkGray -NoNewline
-    Write-Host $Value -ForegroundColor Gray
-}
-
-function Write-Tag {
-    param(
-        [ValidateSet('info', 'run', 'ok', 'next')]
-        [string]$Level,
+        [Parameter(Mandatory = $true)]
         [string]$Message
     )
-    $tag = ''
-    $color = 'Gray'
-    switch ($Level) {
-        'info' { $tag = '[info]'; $color = 'DarkCyan' }
-        'run'  { $tag = '[run]';  $color = 'Cyan' }
-        'ok'   { $tag = '[ok]';   $color = 'Green' }
-        'next' { $tag = '[next]'; $color = 'Yellow' }
-    }
-    Write-Host ('  ' + $tag + ' ') -ForegroundColor $color -NoNewline
-    Write-Host $Message -ForegroundColor Gray
-}
-
-function Write-SuccessPanel {
-    param([string]$Message)
     Write-Host ''
-    Write-Host ('  ' + ('━' * 64)) -ForegroundColor DarkGray
-    Write-Host '  ' -NoNewline
-    Write-Host 'SUCCESS  ' -ForegroundColor Green -NoNewline
-    Write-Host $Message -ForegroundColor White
-    Write-Host ('  ' + ('━' * 64)) -ForegroundColor DarkGray
+    Write-Host ('  ' + $Message) -ForegroundColor White
+    Write-Host ('  ' + ('─' * $UiRuleWidth)) -ForegroundColor DarkGray
+}
+function Write-Status {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Info', 'Running', 'Success', 'Action')]
+        [string]$Kind,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+    switch ($Kind) {
+        'Info' {
+            $tag = 'info'
+            $color = [ConsoleColor]::DarkCyan
+        }
+        'Running' {
+            $tag = 'run'
+            $color = [ConsoleColor]::Cyan
+        }
+        'Success' {
+            $tag = 'ok'
+            $color = [ConsoleColor]::Green
+        }
+        'Action' {
+            $tag = 'next'
+            $color = [ConsoleColor]::Yellow
+        }
+    }
+    Write-Host ('  [' + $tag + ']') -ForegroundColor $color -NoNewline
+    Write-Host (' ' + $Message) -ForegroundColor Gray
+}
+function Write-Field {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+        [AllowNull()]
+        [object]$Value
+    )
+    Write-Host ('  {0,-23}' -f ($Label + ':')) -ForegroundColor DarkGray -NoNewline
+    Write-Host ([string]$Value) -ForegroundColor Gray
+}
+function Write-SuccessHeader {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
     Write-Host ''
+    Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Green
+    Write-Host '  SUCCESS' -ForegroundColor Green -NoNewline
+    Write-Host ('  ' + $Message) -ForegroundColor White
+    Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Green
 }
-
-# --------------------------------------------------------------------
-# Diagnostic / state helpers
-# --------------------------------------------------------------------
-
-function Get-ExceptionDescription {
-    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
-    if ($null -eq $ErrorRecord) {
-        return 'Unknown error (no error record).'
+function Get-ErrorDescription {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.ErrorRecord]$ErrorRecord
+    )
+    $parts = New-Object System.Collections.Generic.List[string]
+    if ($ErrorRecord.Exception -and $ErrorRecord.Exception.Message) {
+        $parts.Add($ErrorRecord.Exception.Message.Trim())
     }
-    $message = 'Unknown error.'
-    if ($null -ne $ErrorRecord.Exception) {
-        $message = $ErrorRecord.Exception.Message
+    if ($ErrorRecord.FullyQualifiedErrorId) {
+        $parts.Add('ErrorId=' + $ErrorRecord.FullyQualifiedErrorId)
     }
-    $id = $ErrorRecord.FullyQualifiedErrorId
-    if ([string]::IsNullOrWhiteSpace($id)) {
-        return $message
+    if ($ErrorRecord.Exception) {
+        try {
+            $hresultBytes = [BitConverter]::GetBytes(
+                [int32]$ErrorRecord.Exception.HResult
+            )
+            $unsignedHresult = [BitConverter]::ToUInt32(
+                $hresultBytes,
+                0
+            )
+            $parts.Add(
+                ('HRESULT=0x{0:X8}' -f $unsignedHresult)
+            )
+        }
+        catch {
+        }
     }
-    return ($message + ' [' + $id + ']')
+    return ($parts -join ' | ')
 }
-
-function Get-OsBitLockerVolume {
-    param([string]$MountPoint = 'C:')
-    $volume = Get-BitLockerVolume -MountPoint $MountPoint -ErrorAction Stop
+function Get-SystemBitLockerVolume {
+    $volume = Get-BitLockerVolume `
+        -MountPoint $MountPoint `
+        -ErrorAction Stop
+    if ($null -eq $volume) {
+        throw (
+            'Get-BitLockerVolume returned no information for ' +
+            $MountPoint +
+            '.'
+        )
+    }
     return $volume
 }
-
-function Get-RecoveryProtectors {
-    param($Volume)
-    return @($Volume.KeyProtector |
-        Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' })
-}
-
-function Get-BootProtectors {
-    param($Volume)
-    $bootTypes = @(
-        'Tpm', 'TpmPin', 'TpmStartupKey', 'TpmPinStartupKey',
-        'ExternalKey', 'StartupKey'
-    )
-    return @($Volume.KeyProtector |
-        Where-Object { $bootTypes -contains $_.KeyProtectorType })
-}
-
-function Get-TpmReadiness {
-    $info = [pscustomobject]@{
-        Determined = $false
-        Present    = $false
-        Ready      = $false
-        LockedOut  = $false
-    }
-    try {
-        $tpm = Get-Tpm -ErrorAction Stop
-        $info.Determined = $true
-        $info.Present = [bool]$tpm.TpmPresent
-        $info.Ready = [bool]$tpm.TpmReady
-        if ($tpm.PSObject.Properties.Name -contains 'LockedOut') {
-            $info.LockedOut = [bool]$tpm.LockedOut
-        }
-    }
-    catch {
-        Write-Warning ('Unable to query TPM state: ' +
-            (Get-ExceptionDescription $_))
-    }
-    return $info
-}
-
-function Get-JoinState {
-    $state = [pscustomobject]@{
-        DomainJoined    = 'Unknown'
-        DomainName      = ''
-        AzureAdJoined   = 'Unknown'
-        WorkplaceJoined = 'Unknown'
-        EntraTenant     = ''
-    }
-
-    try {
-        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
-        if ($cs.PartOfDomain) {
-            $state.DomainJoined = 'YES'
-            $state.DomainName = [string]$cs.Domain
-        }
-        else {
-            $state.DomainJoined = 'NO'
-        }
-    }
-    catch {
-        Write-Warning ('Could not determine AD domain join state: ' +
-            (Get-ExceptionDescription $_))
-    }
-
-    try {
-        $out = & dsregcmd.exe /status 2>$null
-        if ($null -ne $out) {
-            foreach ($line in $out) {
-                if ($line -match 'AzureAdJoined\s*:\s*(\S+)') {
-                    $state.AzureAdJoined = $Matches[1].ToUpper()
-                }
-                elseif ($line -match 'WorkplaceJoined\s*:\s*(\S+)') {
-                    $state.WorkplaceJoined = $Matches[1].ToUpper()
-                }
-                elseif ($line -match 'TenantName\s*:\s*(.+)') {
-                    $state.EntraTenant = $Matches[1].Trim()
-                }
-                elseif ($state.DomainJoined -eq 'Unknown' -and
-                    $line -match 'DomainJoined\s*:\s*(\S+)') {
-                    $state.DomainJoined = $Matches[1].ToUpper()
-                }
-            }
-        }
-    }
-    catch {
-        Write-Warning ('Could not determine Microsoft Entra join state: ' +
-            (Get-ExceptionDescription $_))
-    }
-
-    return $state
-}
-
-function Get-SecureBootState {
-    try {
-        $enabled = Confirm-SecureBootUEFI -ErrorAction Stop
-        if ($enabled) {
-            return 'Enabled'
-        }
-        return 'Disabled'
-    }
-    catch {
-        # Thrown on legacy BIOS or when the platform cannot report it.
-        return 'Unknown'
-    }
-}
-
-function Get-PolicyEncryptionMethod {
-    # Reads the OS-drive policy value EncryptionMethodWithXtsOs under
-    # HKLM\SOFTWARE\Policies\Microsoft\FVE and maps it to the parameter
-    # set used by Enable-BitLocker. Returns $null when no policy applies.
-    $path = 'HKLM:\SOFTWARE\Policies\Microsoft\FVE'
-    if (-not (Test-Path -Path $path)) {
-        return $null
-    }
-    try {
-        $item = Get-ItemProperty -Path $path -ErrorAction Stop
-    }
-    catch {
-        return $null
-    }
-    if ($item.PSObject.Properties.Name -notcontains 'EncryptionMethodWithXtsOs') {
-        return $null
-    }
-    $value = $item.EncryptionMethodWithXtsOs
-    if ($null -eq $value) {
-        return $null
-    }
-    switch ([int]$value) {
-        3 { return 'Aes128' }
-        4 { return 'Aes256' }
-        6 { return 'XtsAes128' }
-        7 { return 'XtsAes256' }
-        default { return $null }
-    }
-}
-
-function Invoke-RecoveryEscrow {
-    # Submits each recovery-password protector to AD DS and to Microsoft
-    # Entra ID. A successful backup cmdlet result is treated as an
-    # accepted submission. Read-back verification is intentionally NOT
-    # performed; that requires separate directory permissions/tooling.
+function Get-RecoveryPasswordProtectors {
     param(
-        [string]$MountPoint,
-        [string[]]$ProtectorIds
+        [Parameter(Mandatory = $true)]
+        $Volume
     )
-
+    return @(
+        $Volume.KeyProtector |
+            Where-Object {
+                [string]$_.KeyProtectorType -eq 'RecoveryPassword'
+            }
+    )
+}
+function Get-BootProtectors {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Volume
+    )
+    $bootProtectorTypes = @(
+        'Tpm'
+        'TpmPin'
+        'TpmStartupKey'
+        'TpmPinStartupKey'
+        'ExternalKey'
+    )
+    return @(
+        $Volume.KeyProtector |
+            Where-Object {
+                [string]$_.KeyProtectorType -in $bootProtectorTypes
+            }
+    )
+}
+function Assert-TpmReady {
+    if (
+        -not (
+            Get-Command `
+                -Name Get-Tpm `
+                -ErrorAction SilentlyContinue
+        )
+    ) {
+        throw (
+            'Get-Tpm is unavailable. ' +
+            'The TrustedPlatformModule PowerShell module is required.'
+        )
+    }
+    $tpm = Get-Tpm -ErrorAction Stop
+    if (-not $tpm.TpmPresent) {
+        throw (
+            'No compatible TPM was detected. ' +
+            'A TPM is required for unattended TPM-based OS-drive unlock.'
+        )
+    }
+    if (-not $tpm.TpmReady) {
+        throw (
+            'The TPM is present but is not ready. ' +
+            'Check tpm.msc and the UEFI or BIOS TPM configuration. ' +
+            'This script will not clear or reset the TPM automatically.'
+        )
+    }
+    if ($tpm.LockedOut) {
+        Write-Warning (
+            "`n" + 'The TPM reports that it is locked out. ' +
+            'BitLocker activation may fail until the lockout condition ' +
+            'is resolved.' + "`n`n"
+        )
+    }
+    return $tpm
+}
+function Get-EntraJoinState {
+    $dsregcmd = Join-Path `
+        $env:SystemRoot `
+        'System32\dsregcmd.exe'
+    if (
+        -not (
+            Test-Path `
+                -LiteralPath $dsregcmd `
+                -PathType Leaf
+        )
+    ) {
+        Write-Warning (
+            "`n" + 'dsregcmd.exe was not found. ' +
+            'Microsoft Entra join state could not be checked.' + "`n`n"
+        )
+        return $null
+    }
+    try {
+        $output = @(
+            & $dsregcmd /status 2>&1
+        )
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) {
+            Write-Warning (
+                "`n" + 'dsregcmd.exe /status returned exit code ' +
+                $exitCode +
+                '. Entra escrow eligibility cannot be established.' +
+                "`n`n"
+            )
+            return $null
+        }
+        return (
+            @(
+                $output |
+                    Where-Object {
+                        [string]$_ -match (
+                            '^\s*AzureAdJoined\s*:\s*YES\s*$'
+                        )
+                    }
+            ).Count -gt 0
+        )
+    }
+    catch {
+        Write-Warning (
+            "`n" + 'Could not check Microsoft Entra join state: ' +
+            (
+                Get-ErrorDescription `
+                    -ErrorRecord $_
+            ) + "`n`n"
+        )
+        return $null
+    }
+}
+function Get-AdComputerPlacement {
     $result = [pscustomobject]@{
-        AdSuccess  = $false
-        AadSuccess = $false
-        Failures   = @()
+        Determined        = $false
+        DistinguishedName = ''
+        DefaultComputers  = $false
     }
-
-    $adCmd = Get-Command -Name 'Backup-BitLockerKeyProtector' `
-        -ErrorAction SilentlyContinue
-    $aadCmd = Get-Command -Name 'BackupToAAD-BitLockerKeyProtector' `
-        -ErrorAction SilentlyContinue
-
-    if ($null -eq $adCmd) {
-        Write-Warning ('Backup-BitLockerKeyProtector is unavailable; ' +
-            'cannot escrow to AD DS.')
-        $result.Failures += 'AD DS: backup command unavailable.'
-    }
-    if ($null -eq $aadCmd) {
-        Write-Warning ('BackupToAAD-BitLockerKeyProtector is unavailable; ' +
-            'cannot escrow to Microsoft Entra ID.')
-        $result.Failures += 'Entra ID: backup command unavailable.'
-    }
-
-    foreach ($id in $ProtectorIds) {
-        if ($null -ne $adCmd) {
-            Write-Tag run ('Backing up protector ' + $id + ' to AD DS')
-            try {
-                $null = Backup-BitLockerKeyProtector -MountPoint $MountPoint `
-                    -KeyProtectorId $id -ErrorAction Stop
-                $result.AdSuccess = $true
-                Write-Tag ok 'Recovery protector submitted to AD DS'
-            }
-            catch {
-                $detail = Get-ExceptionDescription $_
-                Write-Warning ('AD DS backup failed for ' + $id + ': ' + $detail)
-                $result.Failures += ('AD DS (' + $id + '): ' + $detail)
-            }
+    $root = $null
+    $entry = $null
+    $searcher = $null
+    try {
+        $root = [ADSI]'LDAP://RootDSE'
+        $baseDn = [string]$root.defaultNamingContext
+        if ([string]::IsNullOrWhiteSpace($baseDn)) {
+            throw 'RootDSE did not return a default naming context.'
         }
-
-        if ($null -ne $aadCmd) {
-            Write-Tag run ('Backing up protector ' + $id +
-                ' to Microsoft Entra ID')
-            try {
-                $null = BackupToAAD-BitLockerKeyProtector -MountPoint $MountPoint `
-                    -KeyProtectorId $id -ErrorAction Stop
-                $result.AadSuccess = $true
-                Write-Tag ok 'Recovery protector submitted to Microsoft Entra ID'
-            }
-            catch {
-                $detail = Get-ExceptionDescription $_
-                Write-Warning ('Entra ID backup failed for ' + $id + ': ' +
-                    $detail)
-                $result.Failures += ('Entra ID (' + $id + '): ' + $detail)
-            }
+        $entry = New-Object `
+            -TypeName System.DirectoryServices.DirectoryEntry `
+            -ArgumentList ("LDAP://$baseDn")
+        $searcher = New-Object `
+            -TypeName System.DirectoryServices.DirectorySearcher `
+            -ArgumentList $entry
+        $searcher.Filter = (
+            '(&(objectCategory=computer)(sAMAccountName=' +
+            $env:COMPUTERNAME +
+            '$))'
+        )
+        [void]$searcher.PropertiesToLoad.Add('distinguishedName')
+        $found = $searcher.FindOne()
+        if ($null -ne $found) {
+            $dn = [string]$found.Properties['distinguishedname'][0]
+            $result.Determined = $true
+            $result.DistinguishedName = $dn
+            $result.DefaultComputers = (
+                $dn -ieq (
+                    'CN=' +
+                    $env:COMPUTERNAME +
+                    ',CN=Computers,' +
+                    $baseDn
+                )
+            )
         }
     }
-
+    catch {
+        Write-Warning (
+            "`n" + 'Could not determine AD computer location: ' +
+            (Get-ErrorDescription -ErrorRecord $_) +
+            "`n`n"
+        )
+    }
+    finally {
+        if ($null -ne $searcher) {
+            $searcher.Dispose()
+        }
+        if ($null -ne $entry) {
+            $entry.Dispose()
+        }
+        if ($null -ne $root) {
+            $root.Dispose()
+        }
+    }
     return $result
 }
-
-function Start-OsEncryption {
-    param(
-        [string]$MountPoint,
-        [string]$EncryptionMethod,
-        [bool]$UsedSpaceOnly,
-        [bool]$SkipHardwareTest,
-        $BootProtectors
-    )
-
-    $splat = @{
-        MountPoint       = $MountPoint
-        EncryptionMethod = $EncryptionMethod
-        ErrorAction      = 'Stop'
+function Get-AdRecoveryEscrowPolicy {
+    $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\FVE'
+    $result = [pscustomobject]@{
+        Determined              = $false
+        OSRecovery              = $null
+        OSActiveDirectoryBackup = $null
+        OSRecoveryPassword      = $null
+        Eligible                = $false
     }
-    if ($UsedSpaceOnly) {
-        $splat['UsedSpaceOnly'] = $true
-        Write-Warning ('UsedSpaceOnly requested: free space that may contain ' +
-            'remnants of previously deleted data is NOT encrypted during the ' +
-            'initial conversion.')
-    }
-    if ($SkipHardwareTest) {
-        $splat['SkipHardwareTest'] = $true
-        Write-Warning ('SkipHardwareTest requested: BitLocker preboot ' +
-            'validation is bypassed and encryption begins immediately.')
-    }
-
-    $tpmFamily = @($BootProtectors | Where-Object {
-            @('Tpm', 'TpmPin', 'TpmStartupKey', 'TpmPinStartupKey') `
-                -contains $_.KeyProtectorType
-        })
-    $external = @($BootProtectors | Where-Object {
-            @('ExternalKey', 'StartupKey') -contains $_.KeyProtectorType
-        })
-
-    if ($tpmFamily.Count -eq 0 -and $external.Count -eq 0) {
-        Write-Tag run 'No boot protector present; validating TPM for startup'
-        $tpm = Get-TpmReadiness
-        if (-not $tpm.Determined) {
-            throw ('Cannot enable BitLocker: TPM state could not be ' +
-                'determined and no existing boot protector is present.')
+    try {
+        if (-not (Test-Path -LiteralPath $policyPath -PathType Container)) {
+            $result.Determined = $true
+            return $result
         }
-        if (-not $tpm.Present) {
-            throw ('Cannot enable BitLocker: no TPM is present and no ' +
-                'existing boot protector is available for unattended startup.')
-        }
-        if ($tpm.LockedOut) {
-            Write-Warning ('The TPM reports a lockout condition; BitLocker ' +
-                'enablement may fail until the lockout clears.')
-        }
-        if (-not $tpm.Ready) {
-            throw ('Cannot enable BitLocker: the TPM is present but not ' +
-                'ready. Initialize the TPM through the TPM management console ' +
-                'first. This script will not clear, reset, or take ownership ' +
-                'of the TPM automatically.')
-        }
-        $splat['TpmProtector'] = $true
-        Write-Tag run 'Enabling BitLocker with a TPM startup protector'
-        $null = Enable-BitLocker @splat
-        Write-Tag ok 'BitLocker enablement requested'
-    }
-    else {
-        # A decrypted volume that already carries a startup protector is
-        # not expected (decryption removes protectors). Rather than
-        # weaken the configuration (for example by adding a TPM-only
-        # protector beside a TPM+PIN one) or duplicate it, refuse to
-        # start encryption automatically and tell the operator.
-        Write-Tag info 'Existing boot protector detected on a decrypted volume'
-        throw ('C: is fully decrypted but already carries a startup ' +
-            '(boot) protector. To avoid weakening or duplicating the ' +
-            'existing startup configuration, this script will not start ' +
-            'encryption automatically in this state. Start encryption ' +
-            'manually so the existing protector is reused (for example: ' +
-            'manage-bde -on C:), then re-run this script to confirm ' +
-            'recovery-key escrow and protection.')
-    }
-}
-
-function Test-FinalState {
-    param(
-        $Volume,
-        [bool]$ActivationRequested,
-        [bool]$SkipHwTest
-    )
-    switch ($Volume.VolumeStatus) {
-        'FullyEncrypted' {
-            if ($Volume.ProtectionStatus -ne 'On') {
-                throw ('Final verification failed: C: is fully encrypted but ' +
-                    'protection is ' + $Volume.ProtectionStatus +
-                    ' (expected On).')
+        $policy = Get-ItemProperty `
+            -LiteralPath $policyPath `
+            -ErrorAction Stop
+        foreach ($propertyName in @(
+            'OSRecovery'
+            'OSActiveDirectoryBackup'
+            'OSRecoveryPassword'
+        )) {
+            $property = $policy.PSObject.Properties[$propertyName]
+            if ($null -ne $property) {
+                $result.$propertyName = [int]$property.Value
             }
         }
-        'EncryptionInProgress' {
-            # Acceptable; do not wait for completion.
+        $result.Determined = $true
+        $result.Eligible = (
+            $result.OSRecovery -eq 1 -and
+            $result.OSActiveDirectoryBackup -eq 1 -and
+            $null -ne $result.OSRecoveryPassword -and
+            $result.OSRecoveryPassword -ne 0
+        )
+    }
+    catch {
+        Write-Warning (
+            "`n" + 'Could not read effective AD DS BitLocker recovery ' +
+            'policy: ' +
+            (Get-ErrorDescription -ErrorRecord $_) +
+            "`n`n"
+        )
+    }
+    return $result
+}
+function Format-PolicyValue {
+    param(
+        [AllowNull()]
+        [object]$Value,
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$EnabledTest
+    )
+    if ($null -eq $Value) {
+        return 'Not configured'
+    }
+    if (& $EnabledTest $Value) {
+        return ([string]$Value + ' (eligible)')
+    }
+    return ([string]$Value + ' (not eligible)')
+}
+function Find-AvailableDomainController {
+    $result = [pscustomobject]@{
+        Available        = $false
+        DomainController = ''
+    }
+    $domain = $null
+    $domainController = $null
+    try {
+        $domain = (
+            [System.DirectoryServices.ActiveDirectory.Domain]::
+                GetComputerDomain()
+        )
+        $domainController = $domain.FindDomainController()
+        if (
+            $null -ne $domainController -and
+            -not [string]::IsNullOrWhiteSpace($domainController.Name)
+        ) {
+            $result.Available = $true
+            $result.DomainController = [string]$domainController.Name
         }
-        'FullyDecrypted' {
-            if (-not ($ActivationRequested -and -not $SkipHwTest)) {
-                throw ('Final verification failed: C: is fully decrypted and ' +
-                    'no valid pending hardware test explains it.')
+    }
+    catch {
+        Write-Warning (
+            "`n" + 'No AD DS domain controller could be discovered: ' +
+            (Get-ErrorDescription -ErrorRecord $_) +
+            "`n`n"
+        )
+    }
+    finally {
+        if ($null -ne $domainController) {
+            $domainController.Dispose()
+        }
+        if ($null -ne $domain) {
+            $domain.Dispose()
+        }
+    }
+    return $result
+}
+function Get-PolicyEncryptionMethod {
+    $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\FVE'
+    try {
+        $policy = Get-ItemProperty `
+            -LiteralPath $policyPath `
+            -ErrorAction Stop
+        $property = $policy.PSObject.Properties[
+            'EncryptionMethodWithXtsOs'
+        ]
+        if ($null -eq $property) {
+            return $null
+        }
+        switch ([int]$property.Value) {
+            3 {
+                return 'Aes128'
+            }
+            4 {
+                return 'Aes256'
+            }
+            6 {
+                return 'XtsAes128'
+            }
+            7 {
+                return 'XtsAes256'
+            }
+            default {
+                Write-Warning (
+                    "`n" + 'Unsupported OS-drive encryption policy value ' +
+                    $property.Value +
+                    ' was found in ' +
+                    $policyPath +
+                    '.' + "`n`n"
+                )
+                return $null
             }
         }
-        default {
-            throw ('Final verification failed: unexpected BitLocker volume ' +
-                'status ' + $Volume.VolumeStatus + '.')
-        }
+    }
+    catch [System.Management.Automation.ItemNotFoundException] {
+        return $null
+    }
+    catch {
+        Write-Warning (
+            "`n" + 'Could not read the configured BitLocker encryption method: ' +
+            (
+                Get-ErrorDescription `
+                    -ErrorRecord $_
+            ) + "`n`n"
+        )
+        return $null
     }
 }
-
-# --------------------------------------------------------------------
-# Main
-# --------------------------------------------------------------------
-
-try {
-    Write-Section 'Checking administrative privileges'
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
-    $adminRole = [System.Security.Principal.WindowsBuiltInRole]::Administrator
-    $isAdmin = $principal.IsInRole($adminRole)
-    Write-Field 'Identity' $identity.Name
-    Write-Field 'Elevated' ($isAdmin.ToString())
-    if (-not $isAdmin) {
-        throw 'This script must run elevated (Run as Administrator).'
+function Start-EncryptionUsingExistingProtector {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Aes128', 'Aes256', 'XtsAes128', 'XtsAes256')]
+        [string]$Method,
+        [Parameter(Mandatory = $true)]
+        [bool]$EncryptUsedSpaceOnly,
+        [Parameter(Mandatory = $true)]
+        [bool]$BypassHardwareTest
+    )
+    $methodNumbers = @{
+        Aes128    = [uint32]3
+        Aes256    = [uint32]4
+        XtsAes128 = [uint32]6
+        XtsAes256 = [uint32]7
     }
-    Write-Tag info 'A Domain Admin account is neither required nor recommended'
-
-    Write-Section 'Join-state assessment'
-    $join = Get-JoinState
-    Write-Field 'AD domain joined' $join.DomainJoined
-    if (-not [string]::IsNullOrWhiteSpace($join.DomainName)) {
-        Write-Field 'Domain' $join.DomainName
+    $encryptionFlags = [uint32]0
+    if ($EncryptUsedSpaceOnly) {
+        $encryptionFlags = [uint32]1
     }
-    Write-Field 'Entra ID joined' $join.AzureAdJoined
-    Write-Field 'Workplace joined' $join.WorkplaceJoined
-    if (-not [string]::IsNullOrWhiteSpace($join.EntraTenant)) {
-        Write-Field 'Entra tenant' $join.EntraTenant
+    $encryptableVolume = Get-CimInstance `
+        -Namespace 'root/CIMV2/Security/MicrosoftVolumeEncryption' `
+        -ClassName Win32_EncryptableVolume `
+        -Filter "DriveLetter = '$MountPoint'" `
+        -ErrorAction Stop
+    if ($null -eq $encryptableVolume) {
+        throw (
+            'Win32_EncryptableVolume returned no object for ' +
+            $MountPoint +
+            '.'
+        )
     }
-    if ($join.DomainJoined -eq 'Unknown') {
-        Write-Warning ('AD domain join state could not be determined; AD DS ' +
-            'escrow will still be attempted.')
-    }
-    if ($join.AzureAdJoined -eq 'Unknown') {
-        Write-Warning ('Microsoft Entra join state could not be determined; ' +
-            'Entra escrow will still be attempted.')
-    }
-    if ($join.AzureAdJoined -ne 'YES' -and $join.WorkplaceJoined -eq 'YES') {
-        Write-Warning ('A work or school account appears connected, but this ' +
-            'device is not Entra (Azure AD) joined; Entra escrow may not ' +
-            'be available.')
-    }
-
-    Write-Section 'Secure Boot status'
-    $secureBoot = Get-SecureBootState
-    Write-Field 'Secure Boot' $secureBoot
-    if ($secureBoot -eq 'Disabled') {
-        Write-Warning ('Secure Boot is disabled. BitLocker can still be ' +
-            'enabled, but enabling Secure Boot is recommended for stronger ' +
-            'preboot integrity.')
-    }
-    if ($secureBoot -eq 'Unknown') {
-        Write-Warning 'Secure Boot state could not be determined; continuing.'
-    }
-
-    Write-Section 'BitLocker volume state'
-    $vol = Get-OsBitLockerVolume -MountPoint 'C:'
-    if ($vol.VolumeType -ne 'OperatingSystem') {
-        throw ('C: is not reported as the operating-system volume ' +
-            '(VolumeType = ' + $vol.VolumeType + '); aborting.')
-    }
-    if ($vol.LockStatus -ne 'Unlocked') {
-        throw ('C: is not unlocked (LockStatus = ' + $vol.LockStatus +
-            '); aborting.')
-    }
-    Write-Field 'Mount point' ([string]$vol.MountPoint)
-    Write-Field 'Volume type' ([string]$vol.VolumeType)
-    Write-Field 'Volume status' ([string]$vol.VolumeStatus)
-    Write-Field 'Protection' ([string]$vol.ProtectionStatus)
-    Write-Field 'Lock status' ([string]$vol.LockStatus)
-    Write-Field 'Encryption %' ([string]$vol.EncryptionPercentage)
-    Write-Field 'Method (current)' ([string]$vol.EncryptionMethod)
-
-    if ($vol.VolumeStatus -eq 'DecryptionInProgress') {
-        throw ('C: decryption is currently in progress. This script will not ' +
-            'automatically reverse an active decryption. Let decryption ' +
-            'complete (or stop it deliberately), then re-run this script.')
-    }
-    if ($vol.VolumeStatus -eq 'DecryptionPaused') {
-        throw ('C: decryption is paused. This script will not automatically ' +
-            'reverse a paused decryption. Resolve the decryption state ' +
-            'deliberately, then re-run this script.')
-    }
-
-    # Resolve the effective encryption method against policy.
-    $effectiveMethod = $EncryptionMethod
-    $policyMethod = Get-PolicyEncryptionMethod
-    if ($null -ne $policyMethod -and $policyMethod -ne $EncryptionMethod) {
-        Write-Warning ('An OS-drive encryption policy requires ' +
-            $policyMethod + '; using it instead of the requested ' +
-            $EncryptionMethod + '.')
-        $effectiveMethod = $policyMethod
-    }
-
-    Write-Section 'Recovery-password protector'
-    $recovery = @(Get-RecoveryProtectors $vol)
-    if ($recovery.Count -eq 0) {
-        Write-Tag run 'No recovery-password protector found; creating one'
-        $null = Add-BitLockerKeyProtector -MountPoint 'C:' `
-            -RecoveryPasswordProtector -ErrorAction Stop
-        $vol = Get-OsBitLockerVolume -MountPoint 'C:'
-        $recovery = @(Get-RecoveryProtectors $vol)
-        Write-Tag ok 'Recovery-password protector created'
+    if ($BypassHardwareTest) {
+        $methodName = 'Encrypt'
     }
     else {
-        Write-Tag info ('Existing recovery-password protector(s): ' +
-            $recovery.Count)
-        if ($recovery.Count -gt 1) {
-            Write-Warning ('Multiple recovery-password protectors exist; all ' +
-                'are retained and submitted to both directories.')
+        $methodName = 'EncryptAfterHardwareTest'
+    }
+    $result = Invoke-CimMethod `
+        -InputObject $encryptableVolume `
+        -MethodName $methodName `
+        -Arguments @{
+            EncryptionMethod = $methodNumbers[$Method]
+            EncryptionFlags  = $encryptionFlags
+        } `
+        -ErrorAction Stop
+    $returnValue = [uint32]$result.ReturnValue
+    if ($returnValue -ne 0) {
+        $hexValue = '0x{0:X8}' -f $returnValue
+        throw (
+            $methodName +
+            ' failed for ' +
+            $MountPoint +
+            ' with return value ' +
+            $hexValue +
+            '.'
+        )
+    }
+}
+function Resume-EncryptionConversion {
+    $manageBde = Join-Path `
+        $env:SystemRoot `
+        'System32\manage-bde.exe'
+    if (
+        -not (
+            Test-Path `
+                -LiteralPath $manageBde `
+                -PathType Leaf
+        )
+    ) {
+        throw (
+            'manage-bde.exe was not found, so paused encryption ' +
+            'cannot be resumed.'
+        )
+    }
+    $output = @(
+        & $manageBde -resume $MountPoint 2>&1
+    )
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $text = (
+            $output |
+                ForEach-Object {
+                    [string]$_
+                }
+        ) -join ' '
+        throw (
+            'manage-bde.exe could not resume encryption on ' +
+            $MountPoint +
+            '. ExitCode=' +
+            $exitCode +
+            '. ' +
+            $text
+        )
+    }
+}
+function Invoke-RecoveryEscrow {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Protectors,
+        [Parameter(Mandatory = $true)]
+        [bool]$AttemptAd,
+        [Parameter(Mandatory = $true)]
+        [bool]$AttemptAad
+    )
+    $adEscrowedProtectorIds = @()
+    $aadEscrowedProtectorIds = @()
+    $adFailedProtectorIds = @()
+    $aadFailedProtectorIds = @()
+    $adFailureDetails = @()
+    $aadFailureDetails = @()
+    $adCommand = $null
+    $aadCommand = $null
+    if ($AttemptAd) {
+        $adCommand = Get-Command `
+            -Name Backup-BitLockerKeyProtector `
+            -ErrorAction SilentlyContinue
+    }
+    if ($AttemptAad) {
+        $aadCommand = Get-Command `
+            -Name BackupToAAD-BitLockerKeyProtector `
+            -ErrorAction SilentlyContinue
+    }
+    foreach ($protector in $Protectors) {
+        $protectorId = [string]$protector.KeyProtectorId
+        if ([string]::IsNullOrWhiteSpace($protectorId)) {
+            throw (
+                'A recovery-password protector has no KeyProtectorId.'
+            )
         }
-    }
-    $protectorIds = @($recovery | ForEach-Object { $_.KeyProtectorId })
-    foreach ($protectorId in $protectorIds) {
-        Write-Field 'Protector ID' ([string]$protectorId)
-    }
-
-    Write-Section 'Recovery-key escrow'
-    $escrow = Invoke-RecoveryEscrow -MountPoint 'C:' -ProtectorIds $protectorIds
-    Write-Host ''
-    $adText = 'failed'
-    if ($escrow.AdSuccess) { $adText = 'succeeded' }
-    $aadText = 'failed'
-    if ($escrow.AadSuccess) { $aadText = 'succeeded' }
-    Write-Field 'AD DS escrow' $adText
-    Write-Field 'Entra ID escrow' $aadText
-
-    if (-not $escrow.AdSuccess -and -not $escrow.AadSuccess) {
-        $detail = ($escrow.Failures -join '; ')
-        throw ('Recovery-key escrow failed for BOTH AD DS and Microsoft ' +
-            'Entra ID. No recovery key was accepted by either directory and ' +
-            'encryption was not started. Details: ' + $detail)
-    }
-    if ($escrow.AdSuccess -and -not $escrow.AadSuccess) {
-        Write-Warning ('Recovery key was accepted by AD DS but NOT by ' +
-            'Microsoft Entra ID.')
-    }
-    if ($escrow.AadSuccess -and -not $escrow.AdSuccess) {
-        Write-Warning ('Recovery key was accepted by Microsoft Entra ID but ' +
-            'NOT by AD DS.')
-    }
-
-    Write-Section 'Encryption and protection'
-    Write-Field 'Requested method' $EncryptionMethod
-    Write-Field 'Effective method' $effectiveMethod
-    $activationRequested = $false
-
-    switch ($vol.VolumeStatus) {
-        'FullyDecrypted' {
-            Write-Warning ('C: is fully decrypted. Confirm that no ' +
-                'third-party full-disk encryption product is active before ' +
-                'proceeding; this script cannot detect every such product.')
-            $boot = @(Get-BootProtectors $vol)
-            Start-OsEncryption -MountPoint 'C:' `
-                -EncryptionMethod $effectiveMethod `
-                -UsedSpaceOnly ([bool]$UsedSpaceOnly) `
-                -SkipHardwareTest ([bool]$SkipHardwareTest) `
-                -BootProtectors $boot
-            $activationRequested = $true
-        }
-        'EncryptionInProgress' {
-            Write-Tag info 'Encryption already in progress; not restarting it'
-        }
-        'EncryptionPaused' {
-            Write-Tag run 'Encryption is paused; resuming'
-            $null = Resume-BitLocker -MountPoint 'C:' -ErrorAction Stop
-            Write-Tag ok 'Resume requested'
-        }
-        'FullyEncrypted' {
-            if ($vol.ProtectionStatus -ne 'On') {
-                Write-Tag run ('Volume encrypted but protection is Off; ' +
-                    'resuming protection')
-                $null = Resume-BitLocker -MountPoint 'C:' -ErrorAction Stop
-                Write-Tag ok 'Protection resume requested'
+        if ($AttemptAd) {
+            if ($null -eq $adCommand) {
+                $message = 'Backup-BitLockerKeyProtector is unavailable.'
+                $adFailedProtectorIds += $protectorId
+                $adFailureDetails += ($protectorId + ': ' + $message)
+                Write-Warning ("`n" + $message + "`n`n")
             }
             else {
-                Write-Tag info 'Volume already fully encrypted and protected'
+                try {
+                    Write-Status `
+                        -Kind Running `
+                        -Message (
+                            'Backing up protector ' +
+                            $protectorId +
+                            ' to AD DS'
+                        )
+                    $null = Backup-BitLockerKeyProtector `
+                        -MountPoint $MountPoint `
+                        -KeyProtectorId $protectorId `
+                        -Confirm:$false `
+                        -ErrorAction Stop
+                    $adEscrowedProtectorIds += $protectorId
+                    Write-Status `
+                        -Kind Success `
+                        -Message 'Recovery protector submitted to AD DS'
+                }
+                catch {
+                    $message = Get-ErrorDescription -ErrorRecord $_
+                    $adFailedProtectorIds += $protectorId
+                    $adFailureDetails += ($protectorId + ': ' + $message)
+                    Write-Warning (
+                        "`n" + 'AD DS escrow failed for protector ' +
+                        $protectorId +
+                        ': ' +
+                        $message + "`n`n"
+                    )
+                }
+            }
+        }
+        if ($AttemptAad) {
+            if ($null -eq $aadCommand) {
+                $message = (
+                    'BackupToAAD-BitLockerKeyProtector is unavailable.'
+                )
+                $aadFailedProtectorIds += $protectorId
+                $aadFailureDetails += ($protectorId + ': ' + $message)
+                Write-Warning ("`n" + $message + "`n`n")
+            }
+            else {
+                try {
+                    Write-Status `
+                        -Kind Running `
+                        -Message (
+                            'Backing up protector ' +
+                            $protectorId +
+                            ' to Microsoft Entra ID'
+                        )
+                    $null = BackupToAAD-BitLockerKeyProtector `
+                        -MountPoint $MountPoint `
+                        -KeyProtectorId $protectorId `
+                        -Confirm:$false `
+                        -ErrorAction Stop
+                    $aadEscrowedProtectorIds += $protectorId
+                    Write-Status `
+                        -Kind Success `
+                        -Message (
+                            'Recovery protector submitted to ' +
+                            'Microsoft Entra ID'
+                        )
+                }
+                catch {
+                    $message = Get-ErrorDescription -ErrorRecord $_
+                    $aadFailedProtectorIds += $protectorId
+                    $aadFailureDetails += ($protectorId + ': ' + $message)
+                    Write-Warning (
+                        "`n" + 'Microsoft Entra escrow failed for protector ' +
+                        $protectorId +
+                        ': ' +
+                        $message + "`n`n"
+                    )
+                }
+            }
+        }
+    }
+    if (-not $AttemptAd) {
+        $adState = 'Not applicable'
+    }
+    elseif ($adEscrowedProtectorIds.Count -gt 0) {
+        $adState = 'Succeeded'
+    }
+    else {
+        $adState = 'Failed'
+    }
+    if (-not $AttemptAad) {
+        $aadState = 'Not applicable'
+    }
+    elseif ($aadEscrowedProtectorIds.Count -gt 0) {
+        $aadState = 'Succeeded'
+    }
+    else {
+        $aadState = 'Failed'
+    }
+    return [pscustomobject]@{
+        AdState                   = $adState
+        AadState                  = $aadState
+        AdEscrowedProtectorIds    = @($adEscrowedProtectorIds)
+        AadEscrowedProtectorIds   = @($aadEscrowedProtectorIds)
+        AdFailedProtectorIds      = @($adFailedProtectorIds)
+        AadFailedProtectorIds     = @($aadFailedProtectorIds)
+        AdFailureDetails          = @($adFailureDetails)
+        AadFailureDetails         = @($aadFailureDetails)
+        AtLeastOneSaved           = (
+            $adEscrowedProtectorIds.Count -gt 0 -or
+            $aadEscrowedProtectorIds.Count -gt 0
+        )
+    }
+}
+try {
+    Write-Step 'Preflight checks (is everything allright to proceed?)'
+    $currentIdentity = (
+        [Security.Principal.WindowsIdentity]::GetCurrent()
+    )
+    $currentPrincipal = New-Object `
+        -TypeName Security.Principal.WindowsPrincipal `
+        -ArgumentList $currentIdentity
+    $isAdministrator = $currentPrincipal.IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator
+    )
+    if (-not $isAdministrator) {
+        throw (
+            'Run this script from an elevated Windows PowerShell session.'
+        )
+    }
+    Write-Field `
+        -Label 'Identity' `
+        -Value $currentIdentity.Name
+    #Write-Step 'Loading and checking BitLocker support'
+    Import-Module BitLocker `
+        -DisableNameChecking `
+        -ErrorAction Stop
+    $requiredCommands = @(
+        'Get-BitLockerVolume'
+        'Add-BitLockerKeyProtector'
+        'Enable-BitLocker'
+        'Resume-BitLocker'
+    )
+    foreach ($commandName in $requiredCommands) {
+        if (
+            -not (
+                Get-Command `
+                    -Name $commandName `
+                    -ErrorAction SilentlyContinue
+            )
+        ) {
+            throw (
+                "Required BitLocker command '" +
+                $commandName +
+                "' is unavailable."
+            )
+        }
+    }
+    #Write-Step 'Checking domain and Microsoft Entra join state'
+    $computerSystem = Get-CimInstance `
+        -ClassName Win32_ComputerSystem `
+        -ErrorAction Stop
+    $domainJoined = [bool]$computerSystem.PartOfDomain
+    $adEscrowEligible = $false
+    $aadEscrowEligible = $false
+    $adPrerequisiteIssues = @()
+    $aadPrerequisiteIssues = @()
+    if ($domainJoined) {
+        Write-Field `
+            -Label 'AD DS join' `
+            -Value (
+                'Yes - ' +
+                $computerSystem.Domain
+            )
+        $placement = Get-AdComputerPlacement
+        if ($placement.Determined) {
+            Write-Field `
+                -Label 'AD computer DN' `
+                -Value $placement.DistinguishedName
+            if ($placement.DefaultComputers) {
+                Write-Warning (
+                    "`n" + 'This computer account is in the built-in ' +
+                    'CN=Computers container. GPOs cannot be linked directly ' +
+                    'to this container. Confirm the required BitLocker ' +
+                    'policy is inherited from the domain or move the ' +
+                    'computer into the appropriate managed OU.' + "`n`n"
+                )
+            }
+        }
+        $adPolicy = Get-AdRecoveryEscrowPolicy
+        Write-Field `
+            -Label 'OSRecovery' `
+            -Value (
+                Format-PolicyValue `
+                    -Value $adPolicy.OSRecovery `
+                    -EnabledTest { param($value) [int]$value -eq 1 }
+            )
+        Write-Field `
+            -Label 'OSActiveDirectoryBackup' `
+            -Value (
+                Format-PolicyValue `
+                    -Value $adPolicy.OSActiveDirectoryBackup `
+                    -EnabledTest { param($value) [int]$value -eq 1 }
+            )
+        Write-Field `
+            -Label 'OSRecoveryPassword' `
+            -Value (
+                Format-PolicyValue `
+                    -Value $adPolicy.OSRecoveryPassword `
+                    -EnabledTest { param($value) [int]$value -ne 0 }
+            )
+        if (-not $adPolicy.Determined) {
+            $adPrerequisiteIssues += (
+                'effective BitLocker recovery policy could not be read'
+            )
+        }
+        elseif (-not $adPolicy.Eligible) {
+            $adPrerequisiteIssues += (
+                'effective BitLocker policy does not enable AD DS ' +
+                'recovery-password storage'
+            )
+        }
+        $domainController = Find-AvailableDomainController
+        if ($domainController.Available) {
+            Write-Field `
+                -Label 'Domain controller' `
+                -Value $domainController.DomainController
+        }
+        else {
+            $adPrerequisiteIssues += 'no domain controller is available'
+        }
+        if (
+            -not (
+                Get-Command `
+                    -Name Backup-BitLockerKeyProtector `
+                    -ErrorAction SilentlyContinue
+            )
+        ) {
+            $adPrerequisiteIssues += (
+                'Backup-BitLockerKeyProtector is unavailable'
+            )
+        }
+        $adEscrowEligible = ($adPrerequisiteIssues.Count -eq 0)
+    }
+    else {
+        Write-Field -Label 'AD DS join' -Value 'No'
+        $adPrerequisiteIssues += 'device is not AD DS domain joined'
+        Write-Status `
+            -Kind Info `
+            -Message 'Device is not domain joined; AD DS escrow is not applicable'
+    }
+    $entraJoined = Get-EntraJoinState
+    if ($entraJoined -eq $true) {
+        Write-Field `
+            -Label 'Microsoft Entra join' `
+            -Value 'Yes'
+        if (
+            Get-Command `
+                -Name BackupToAAD-BitLockerKeyProtector `
+                -ErrorAction SilentlyContinue
+        ) {
+            $aadEscrowEligible = $true
+        }
+        else {
+            $aadPrerequisiteIssues += (
+                'BackupToAAD-BitLockerKeyProtector is unavailable'
+            )
+        }
+    }
+    elseif ($entraJoined -eq $false) {
+        Write-Field -Label 'Microsoft Entra join' -Value 'No'
+        $aadPrerequisiteIssues += 'device is not Microsoft Entra joined'
+        Write-Status `
+            -Kind Info `
+            -Message (
+                'Device is not Entra joined; Entra escrow is not applicable'
+            )
+    }
+    else {
+        Write-Field -Label 'Microsoft Entra join' -Value 'Unknown'
+        $aadPrerequisiteIssues += (
+            'Microsoft Entra join state could not be determined'
+        )
+        Write-Status `
+            -Kind Info `
+            -Message 'Entra escrow is not applicable without a confirmed join'
+    }
+    if ($adEscrowEligible) {
+        Write-Field -Label 'AD DS escrow preflight' -Value 'Eligible'
+    }
+    else {
+        Write-Field `
+            -Label 'AD DS escrow preflight' `
+            -Value ('Not applicable - ' + ($adPrerequisiteIssues -join '; '))
+    }
+    if ($aadEscrowEligible) {
+        Write-Field -Label 'Entra escrow preflight' -Value 'Eligible'
+    }
+    else {
+        Write-Field `
+            -Label 'Entra escrow preflight' `
+            -Value ('Not applicable - ' + ($aadPrerequisiteIssues -join '; '))
+    }
+    if (-not $adEscrowEligible -and -not $aadEscrowEligible) {
+        throw (
+            'No usable recovery escrow destination is currently available. ' +
+            'AD DS: ' +
+            ($adPrerequisiteIssues -join '; ') +
+            '. Microsoft Entra ID: ' +
+            ($aadPrerequisiteIssues -join '; ') +
+            '. No recovery-password protector was created.'
+        )
+    }
+    # Write-Step 'Checking Secure Boot'
+    if (
+        Get-Command `
+            -Name Confirm-SecureBootUEFI `
+            -ErrorAction SilentlyContinue
+    ) {
+        try {
+            if (
+                Confirm-SecureBootUEFI `
+                    -ErrorAction Stop
+            ) {
+                Write-Field `
+                    -Label 'Secure Boot' `
+                    -Value 'Enabled'
+            }
+            else {
+                Write-Warning (
+                    "`n" + 'Secure Boot is disabled. BitLocker can still work, ' +
+                    'but platform-integrity protection is weaker.' + "`n`n"
+                )
+            }
+        }
+        catch {
+            Write-Warning (
+                "`n" + 'Secure Boot state could not be determined: ' +
+                (
+                    Get-ErrorDescription `
+                        -ErrorRecord $_
+                ) + "`n`n"
+            )
+        }
+    }
+    # Write-Step (
+    #     'Reading the current BitLocker state of ' +
+    #     $MountPoint
+    # )
+    $volume = Get-SystemBitLockerVolume
+    $initialStatus = [string]$volume.VolumeStatus
+    if ([string]$volume.VolumeType -ne 'OperatingSystem') {
+        throw (
+            $MountPoint +
+            ' is not reported as the Windows operating-system volume.'
+        )
+    }
+    if ([string]$volume.LockStatus -ne 'Unlocked') {
+        throw (
+            $MountPoint +
+            ' is unexpectedly locked. ' +
+            'The running Windows OS drive must be unlocked.'
+        )
+    }
+    Write-Field `
+        -Label 'Volume status' `
+        -Value $initialStatus
+    Write-Field `
+        -Label 'Protection status' `
+        -Value ([string]$volume.ProtectionStatus)
+    Write-Field `
+        -Label 'Encryption method' `
+        -Value ([string]$volume.EncryptionMethod)
+    Write-Field `
+        -Label 'Encrypted' `
+        -Value (
+            [string]$volume.EncryptionPercentage +
+            '%'
+        )
+    switch ($initialStatus) {
+        'DecryptionInProgress' {
+            throw (
+                $MountPoint +
+                ' is currently being decrypted. ' +
+                'The script will not reverse an active decryption ' +
+                'operation automatically.'
+            )
+        }
+        'DecryptionPaused' {
+            throw (
+                $MountPoint +
+                ' has paused decryption. ' +
+                'The script will not reverse that operation automatically.'
+            )
+        }
+        'FullyDecrypted' {
+            Write-Warning (
+                "`n" + 'Confirm that no third-party full-disk encryption product ' +
+                'is installed or active. This script cannot reliably detect ' +
+                'every such product.' + "`n`n"
+            )
+        }
+    }
+    # Write-Step 'Selecting the encryption method'
+    $effectiveEncryptionMethod = $EncryptionMethod
+    $policyEncryptionMethod = Get-PolicyEncryptionMethod
+    if ($policyEncryptionMethod) {
+        if ($policyEncryptionMethod -ne $EncryptionMethod) {
+            Write-Warning (
+                "`n" + 'The requested method ' +
+                $EncryptionMethod +
+                ' conflicts with local BitLocker policy. ' +
+                'The script will use ' +
+                $policyEncryptionMethod +
+                '.' + "`n`n"
+            )
+        }
+        $effectiveEncryptionMethod = $policyEncryptionMethod
+    }
+    Write-Field `
+        -Label 'Encryption method' `
+        -Value $effectiveEncryptionMethod
+    if ($UsedSpaceOnly) {
+        Write-Warning (
+            "`n" + 'Used-space-only encryption was requested. Free space that ' +
+            'may contain remnants of deleted data is not covered by the ' +
+            'initial conversion.' + "`n`n"
+        )
+    }
+    else {
+        Write-Field `
+            -Label 'Encryption scope' `
+            -Value 'Entire volume'
+    }
+    if ($SkipHardwareTest) {
+        Write-Warning (
+            "`n" + 'The BitLocker startup hardware test is being skipped. ' +
+            'Encryption will be requested immediately.' + "`n`n"
+        )
+    }
+    else {
+        Write-Field `
+            -Label 'Hardware test' `
+            -Value 'Enabled; restart may be required'
+    }
+    Write-Step (
+        'Ensuring that a recovery-password protector exists'
+    )
+    $recoveryProtectors = @(
+        Get-RecoveryPasswordProtectors `
+            -Volume $volume
+    )
+    if ($recoveryProtectors.Count -eq 0) {
+        Write-Status `
+            -Kind Running `
+            -Message 'Creating a recovery-password protector'
+        $null = Add-BitLockerKeyProtector `
+            -MountPoint $MountPoint `
+            -RecoveryPasswordProtector `
+            -Confirm:$false `
+            -WarningAction SilentlyContinue `
+            -ErrorAction Stop
+        $volume = Get-SystemBitLockerVolume
+        $recoveryProtectors = @(
+            Get-RecoveryPasswordProtectors `
+                -Volume $volume
+        )
+        if ($recoveryProtectors.Count -eq 0) {
+            throw (
+                'Windows reported success while adding a recovery-password ' +
+                'protector, but no recovery-password protector can be found ' +
+                'afterward.'
+            )
+        }
+        Write-Status `
+            -Kind Success `
+            -Message 'Recovery-password protector created'
+    }
+    else {
+        Write-Status `
+            -Kind Info `
+            -Message (
+                'Found ' +
+                $recoveryProtectors.Count +
+                ' existing recovery-password protector(s)'
+            )
+    }
+    if ($recoveryProtectors.Count -gt 1) {
+        Write-Warning (
+            "`n" + 'Multiple recovery-password protectors exist. ' +
+            'The script will attempt to escrow all of them and will not ' +
+            'remove any protector.' + "`n`n"
+        )
+    }
+    foreach ($protector in $recoveryProtectors) {
+        Write-Field `
+            -Label 'Recovery protector' `
+            -Value ([string]$protector.KeyProtectorId)
+    }
+    Write-Step (
+        'Escrowing recovery information to AD DS and Microsoft Entra ID'
+    )
+    $escrow = Invoke-RecoveryEscrow `
+        -Protectors $recoveryProtectors `
+        -AttemptAd $adEscrowEligible `
+        -AttemptAad $aadEscrowEligible
+    Write-Field -Label 'AD DS escrow' -Value $escrow.AdState
+    Write-Field -Label 'Entra escrow' -Value $escrow.AadState
+    foreach ($protectorId in $escrow.AdEscrowedProtectorIds) {
+        Write-Field -Label 'AD escrowed protector' -Value $protectorId
+    }
+    foreach ($protectorId in $escrow.AadEscrowedProtectorIds) {
+        Write-Field -Label 'Entra escrowed protector' -Value $protectorId
+    }
+    foreach ($protectorId in $escrow.AdFailedProtectorIds) {
+        Write-Field -Label 'AD failed protector' -Value $protectorId
+    }
+    foreach ($protectorId in $escrow.AadFailedProtectorIds) {
+        Write-Field -Label 'Entra failed protector' -Value $protectorId
+    }
+    if (-not $escrow.AtLeastOneSaved) {
+        $failureLines = @()
+        $failureLines += @($escrow.AdFailureDetails)
+        $failureLines += @($escrow.AadFailureDetails)
+        $failureText = $failureLines -join (
+            [Environment]::NewLine +
+            ' - '
+        )
+        if ($initialStatus -eq 'FullyDecrypted') {
+            $stateText = (
+                'New BitLocker encryption was not started.'
+            )
+        }
+        else {
+            $stateText = (
+                'The existing BitLocker state was left intact.'
+            )
+        }
+        throw (
+            'No recovery-password protector could be escrowed to either ' +
+            'AD DS or Microsoft Entra ID.' +
+            [Environment]::NewLine +
+            $stateText +
+            [Environment]::NewLine +
+            'Failures:' +
+            [Environment]::NewLine +
+            ' - ' +
+            $failureText
+        )
+    }
+    if (
+        $adEscrowEligible -and
+        $escrow.AdEscrowedProtectorIds.Count -eq 0
+    ) {
+        Write-Warning (
+            "`n" + 'No recovery protector was submitted successfully to AD DS. ' +
+            'Continuing because Microsoft Entra escrow succeeded.' + "`n`n"
+        )
+    }
+    if (
+        $aadEscrowEligible -and
+        $escrow.AadEscrowedProtectorIds.Count -eq 0
+    ) {
+        Write-Warning (
+            "`n" + 'No recovery protector was submitted successfully to ' +
+            'Microsoft Entra ID. Continuing because AD DS escrow succeeded.' + "`n`n"
+        )
+    }
+    # Write-Step 'Ensuring that BitLocker encryption is active'
+    $volume = Get-SystemBitLockerVolume
+    $currentStatus = [string]$volume.VolumeStatus
+    $activationRequested = $false
+    switch ($currentStatus) {
+        'FullyDecrypted' {
+            $bootProtectors = @(
+                Get-BootProtectors `
+                    -Volume $volume
+            )
+            if ($bootProtectors.Count -eq 0) {
+                Write-Status `
+                    -Kind Running `
+                    -Message (
+                        'No boot protector found; checking the TPM'
+                    )
+                $null = Assert-TpmReady
+                $enableParameters = @{
+                    MountPoint       = $MountPoint
+                    EncryptionMethod = $effectiveEncryptionMethod
+                    TpmProtector     = $true
+                    Confirm          = $false
+                    ErrorAction      = 'Stop'
+                }
+                if ($UsedSpaceOnly) {
+                    $enableParameters.UsedSpaceOnly = $true
+                }
+                if ($SkipHardwareTest) {
+                    $enableParameters.SkipHardwareTest = $true
+                }
+                Write-Status `
+                    -Kind Running `
+                    -Message (
+                        'Enabling BitLocker with a TPM protector'
+                    )
+                $null = Enable-BitLocker @enableParameters
+            }
+            else {
+                $types = @(
+                    $bootProtectors |
+                        ForEach-Object {
+                            [string]$_.KeyProtectorType
+                        }
+                ) -join ', '
+                Write-Field `
+                    -Label 'Boot protector(s)' `
+                    -Value $types
+                Write-Status `
+                    -Kind Info `
+                    -Message (
+                        'Preserving the existing startup-protector ' +
+                        'configuration'
+                    )
+                Start-EncryptionUsingExistingProtector `
+                    -Method $effectiveEncryptionMethod `
+                    -EncryptUsedSpaceOnly ([bool]$UsedSpaceOnly) `
+                    -BypassHardwareTest ([bool]$SkipHardwareTest)
+            }
+            $activationRequested = $true
+        }
+        'EncryptionPaused' {
+            Write-Warning (
+                "`n" + 'BitLocker encryption is paused. Resuming the conversion.' + "`n`n"
+            )
+            Resume-EncryptionConversion
+        }
+        'EncryptionInProgress' {
+            Write-Status `
+                -Kind Info `
+                -Message 'Encryption is already in progress'
+        }
+        'FullyEncrypted' {
+            Write-Status `
+                -Kind Success `
+                -Message 'The volume is already fully encrypted'
+        }
+        default {
+            throw (
+                'Unsupported or unexpected BitLocker volume status: ' +
+                $currentStatus
+            )
+        }
+    }
+    Start-Sleep -Seconds 2
+    $volume = Get-SystemBitLockerVolume
+    $currentStatus = [string]$volume.VolumeStatus
+    $currentProtection = [string]$volume.ProtectionStatus
+    if (
+        $currentStatus -ne 'FullyDecrypted' -and
+        $currentProtection -eq 'Off'
+    ) {
+        Write-Warning (
+            "`n" + 'BitLocker protection is suspended or disabled. ' +
+            'Attempting to resume protection.' + "`n`n"
+        )
+        $null = Resume-BitLocker `
+            -MountPoint $MountPoint `
+            -Confirm:$false `
+            -ErrorAction Stop
+        Start-Sleep -Seconds 1
+        $volume = Get-SystemBitLockerVolume
+    }
+    Write-Step 'Performing final local verification'
+    $finalStatus = [string]$volume.VolumeStatus
+    $finalProtection = [string]$volume.ProtectionStatus
+    $finalRecoveryProtectors = @(
+        Get-RecoveryPasswordProtectors `
+            -Volume $volume
+    )
+    if ($finalRecoveryProtectors.Count -eq 0) {
+        throw (
+            'Final verification failed: ' +
+            'no recovery-password protector exists.'
+        )
+    }
+    $rebootRequired = $false
+    switch ($finalStatus) {
+        'FullyEncrypted' {
+            if ($finalProtection -ne 'On') {
+                throw (
+                    'Final verification failed: the volume is fully ' +
+                    'encrypted, but ProtectionStatus is ' +
+                    $finalProtection +
+                    ' rather than On.'
+                )
+            }
+        }
+        'EncryptionInProgress' {
+        }
+        'FullyDecrypted' {
+            if (
+                $activationRequested -and
+                -not $SkipHardwareTest
+            ) {
+                $rebootRequired = $true
+            }
+            else {
+                throw (
+                    'Final verification failed: the volume remains fully ' +
+                    'decrypted and no pending hardware-test activation ' +
+                    'is expected.'
+                )
             }
         }
         default {
-            throw ('Unexpected BitLocker volume status ' + $vol.VolumeStatus +
-                ' for C:; no action taken.')
+            throw (
+                'Final verification failed: unexpected BitLocker status ' +
+                $finalStatus +
+                '.'
+            )
         }
     }
-
-    Write-Section 'Final verification'
-    $final = Get-OsBitLockerVolume -MountPoint 'C:'
-    $finalRecovery = @(Get-RecoveryProtectors $final)
-    if ($finalRecovery.Count -eq 0) {
-        throw ('Final verification failed: no recovery-password protector is ' +
-            'present on C:.')
+    $escrowDestinations = @()
+    if ($escrow.AdEscrowedProtectorIds.Count -gt 0) {
+        $escrowDestinations += 'AD DS'
     }
-
-    $rebootRequired = $false
-    if ($activationRequested -and -not $SkipHardwareTest -and
-        $final.VolumeStatus -eq 'FullyDecrypted') {
-        $rebootRequired = $true
+    if ($escrow.AadEscrowedProtectorIds.Count -gt 0) {
+        $escrowDestinations += 'Microsoft Entra ID'
     }
-
-    Test-FinalState -Volume $final -ActivationRequested $activationRequested `
-        -SkipHwTest ([bool]$SkipHardwareTest)
-
-    Write-Field 'Volume status' ([string]$final.VolumeStatus)
-    Write-Field 'Protection' ([string]$final.ProtectionStatus)
-    Write-Field 'Encryption %' ([string]$final.EncryptionPercentage)
-    Write-Field 'Method' ([string]$final.EncryptionMethod)
-    Write-Field 'Reboot required' ($rebootRequired.ToString())
-
-    $result = [pscustomobject]@{
-        Succeeded                  = $true
-        MountPoint                 = 'C:'
-        VolumeStatus               = [string]$final.VolumeStatus
-        ProtectionStatus           = [string]$final.ProtectionStatus
-        EncryptionPercentage       = $final.EncryptionPercentage
-        EncryptionMethod           = [string]$final.EncryptionMethod
-        RecoveryProtectorIds       = @($finalRecovery |
-            ForEach-Object { [string]$_.KeyProtectorId })
-        EscrowedToActiveDirectory  = [bool]$escrow.AdSuccess
-        EscrowedToMicrosoftEntraId = [bool]$escrow.AadSuccess
-        RebootRequired             = $rebootRequired
-    }
-
-    Write-SuccessPanel 'BitLocker configuration completed'
+    $escrowText = $escrowDestinations -join ' and '
+    Write-SuccessHeader `
+        -Message 'BitLocker configuration completed'
+    Write-Field `
+        -Label 'Drive' `
+        -Value $MountPoint
+    Write-Field `
+        -Label 'Volume status' `
+        -Value $finalStatus
+    Write-Field `
+        -Label 'Protection status' `
+        -Value $finalProtection
+    Write-Field `
+        -Label 'Encryption progress' `
+        -Value (
+            [string]$volume.EncryptionPercentage +
+            '%'
+        )
+    Write-Field `
+        -Label 'Encryption method' `
+        -Value ([string]$volume.EncryptionMethod)
+    Write-Field `
+        -Label 'Recovery escrow' `
+        -Value $escrowText
     if ($rebootRequired) {
-        Write-Tag next ('Restart the laptop to run the BitLocker hardware ' +
-            'test; encryption begins only after a successful test.')
-        Write-Host ''
+        Write-Status `
+            -Kind Action `
+            -Message (
+                'Restart Windows to run the BitLocker hardware test'
+            )
+        Write-Warning (
+            "`n" + 'BitLocker encryption will begin only after the next restart ' +
+            'and a successful startup hardware test.' + "`n`n"
+        )
     }
-
-    return $result
+    elseif ($finalStatus -eq 'EncryptionInProgress') {
+        Write-Status `
+            -Kind Info `
+            -Message 'Encryption is continuing in the background'
+    }
+    else {
+        Write-Status `
+            -Kind Success `
+            -Message (
+                'The operating-system volume is fully encrypted ' +
+                'and protected'
+            )
+    }
+    Write-Host ''
+<#
+    [pscustomobject]@{
+        Succeeded = $true
+        MountPoint = $MountPoint
+        VolumeStatus = $finalStatus
+        ProtectionStatus = $finalProtection
+        EncryptionPercentage = $volume.EncryptionPercentage
+        EncryptionMethod = [string]$volume.EncryptionMethod
+        RecoveryProtectorIds = @(
+            $finalRecoveryProtectors |
+                ForEach-Object {
+                    [string]$_.KeyProtectorId
+                }
+        )
+        EscrowedToActiveDirectory = (
+            $escrow.AdEscrowedProtectorIds.Count -gt 0
+        )
+        EscrowedToMicrosoftEntraId = (
+            $escrow.AadEscrowedProtectorIds.Count -gt 0
+        )
+        RebootRequired = $rebootRequired
+    }
+#>
 }
 catch {
-    $caught = $_
-    Write-Warning ('BITLOCKER CONFIGURATION FAILED: ' +
-        (Get-ExceptionDescription $caught))
-    # No destructive rollback is attempted. Partial external state (for
-    # example a new recovery protector, a record already escrowed to one
-    # directory, encryption already started, or protection already
-    # resumed) is intentionally left in place. Re-running the script is
-    # safe and will reconcile the remaining steps.
-    throw $caught
+    $message = Get-ErrorDescription `
+        -ErrorRecord $_
+    Write-Warning (
+        "`n" + 'BITLOCKER CONFIGURATION FAILED: ' +
+        $message + "`n`n"
+    )
+    throw
 }
