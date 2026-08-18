@@ -124,94 +124,6 @@ function Get-EarlyGchInstallConfigValue {
   return $ConfigObject.$Key
 }
 
-function ConvertTo-EarlyGchPsd1KeyLiteral {
-  param([Parameter(Mandatory)][string]$Key)
-
-  if ($Key -match '^[A-Za-z_][A-Za-z0-9_]*$') { return $Key }
-  return ("'{0}'" -f ($Key -replace "'", "''"))
-}
-
-function ConvertTo-EarlyGchPsd1Literal {
-  param(
-    [AllowNull()]$Value,
-    [int]$Indent = 0
-  )
-
-  $spaces = ''.PadLeft($Indent)
-  $childIndent = $Indent + 4
-  $childSpaces = ''.PadLeft($childIndent)
-
-  if ($null -eq $Value) { return '$null' }
-  if ($Value -is [bool]) {
-    if ($Value) { return '$true' }
-    return '$false'
-  }
-  if ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) { return ([string]$Value) }
-  if ($Value -is [System.Collections.IDictionary]) {
-    $lines = @('@{')
-    foreach ($key in @($Value.Keys | Sort-Object)) {
-      $keyText = ConvertTo-EarlyGchPsd1KeyLiteral -Key ([string]$key)
-      $valueText = ConvertTo-EarlyGchPsd1Literal -Value $Value[$key] -Indent $childIndent
-      $lines += ('{0}{1} = {2}' -f $childSpaces, $keyText, $valueText)
-    }
-    $lines += ($spaces + '}')
-    return ($lines -join [Environment]::NewLine)
-  }
-  if (($Value -is [System.Collections.IEnumerable]) -and (-not ($Value -is [string]))) {
-    $items = @($Value)
-    if ($items.Count -eq 0) { return '@()' }
-    $itemTexts = @()
-    foreach ($item in $items) { $itemTexts += (ConvertTo-EarlyGchPsd1Literal -Value $item -Indent $childIndent) }
-    return ('@({0}{1}{0})' -f [Environment]::NewLine, (($itemTexts | ForEach-Object { $childSpaces + $_ }) -join (',' + [Environment]::NewLine)))
-  }
-  return ("'{0}'" -f (([string]$Value) -replace "'", "''"))
-}
-
-function ConvertTo-EarlyGchPsd1Text {
-  param([Parameter(Mandatory)]$Value)
-  (ConvertTo-EarlyGchPsd1Literal -Value $Value -Indent 0) + [Environment]::NewLine
-}
-
-function Write-EarlyGchTextFileUtf8NoBom {
-  param(
-    [Parameter(Mandatory)][string]$Path,
-    [Parameter(Mandatory)][string]$Text
-  )
-
-  $dir = Split-Path -Parent $Path
-  if ($dir -and (-not (Test-Path -LiteralPath $dir -PathType Container))) {
-    New-Item -ItemType Directory -Path $dir -Force | Out-Null
-  }
-  $enc = New-Object System.Text.UTF8Encoding($false)
-  [System.IO.File]::WriteAllText($Path, $Text, $enc)
-}
-
-function Write-EarlyGchCustomConfigFiles {
-  param(
-    [AllowNull()]$InstallConfig,
-    [Parameter(Mandatory)][string]$ConfigDir
-  )
-
-  $configFiles = Get-EarlyGchInstallConfigSection -ConfigObject $InstallConfig -Key 'ConfigFiles'
-  if ($null -eq $configFiles) { return }
-  if (-not ($configFiles -is [System.Collections.IDictionary])) {
-    throw 'ConfigFiles must be a hashtable whose keys are config file names.'
-  }
-  if (-not (Test-Path -LiteralPath $ConfigDir -PathType Container)) {
-    New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
-  }
-  foreach ($name in @($configFiles.Keys | Sort-Object)) {
-    $fileName = [string]$name
-    if ([string]::IsNullOrWhiteSpace($fileName)) { throw 'ConfigFiles contains an empty config file name.' }
-    if ($fileName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0 -or $fileName -match '[\\/]') {
-      throw "ConfigFiles file name '$fileName' must be a simple file name."
-    }
-    $path = Join-Path $ConfigDir $fileName
-    Write-EarlyGchTextFileUtf8NoBom -Path $path -Text (ConvertTo-EarlyGchPsd1Text -Value $configFiles[$name])
-  }
-}
-
-
 ####################################################################
 #
 #  START OF CONFIG
@@ -1493,54 +1405,6 @@ Moves a completed updater transcript from temp storage into the log folder.
   }
 }
 
-function Ensure-PSModuleInstalled {
-<#
-.SYNOPSIS
-Ensures a PowerShell module is installed locally; installs it if missing.
-.DESCRIPTION
-If installation fails due to PSGallery not being registered, registers
-PSGallery, marks it Trusted, and retries the installation once.
-.OUTPUTS
-None.
-#>
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory)][string]$Name,
-    [string]$Scope = 'AllUsers'
-  )
-
-  Write-Verbose "Checking whether PowerShell module '$Name' is already installed"
-  if (Get-Module -ListAvailable -Name $Name) {
-    Write-Verbose "Module '$Name' is already installed"
-    return
-  }
-
-  Write-Verbose "Ensuring NuGet package provider is available for PowerShellGet"
-  Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope $Scope -ErrorAction Stop | Out-Null
-  Import-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction Stop | Out-Null
-
-  try {
-    Write-Verbose "Installing PowerShell module '$Name' with scope '$Scope'"
-    Install-Module -Name $Name -Scope $Scope -Force -Confirm:$false -ErrorAction Stop
-    Write-Verbose "Successfully installed PowerShell module '$Name'"
-  } catch {
-    if ($_.Exception.Message -like "*No repository with the Name 'PSGallery'*") {
-      Write-Warning "Registering PSGallery"
-      Write-Verbose "Registering default PSRepository because PSGallery was missing"
-      Register-PSRepository -Default -ErrorAction Stop
-      Write-Verbose "Marking PSGallery as Trusted"
-      Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction Stop
-      Write-Verbose "Retrying installation of PowerShell module '$Name'"
-      Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope $Scope -ErrorAction Stop | Out-Null
-      Import-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction Stop | Out-Null
-      Install-Module -Name $Name -Scope $Scope -Force -Confirm:$false -ErrorAction Stop
-      Write-Verbose "Successfully installed PowerShell module '$Name' after registering PSGallery"
-    } else {
-      throw
-    }
-  }
-}
-
 function New-RandomTempDirectoryPath {
 <#
 .SYNOPSIS
@@ -1980,7 +1844,6 @@ System.Collections.Hashtable with keys RootPath and ZipPath.
 #>
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory)][string]$RepositoryUrl,
     [Parameter(Mandatory)][string]$TempPath,
     [Parameter(Mandatory)][string]$ZipCacheDir,
     [Parameter(Mandatory)]$Release,
@@ -2349,37 +2212,6 @@ System.String. A full path string without trailing slashes.
   return ([System.IO.Path]::GetFullPath($Path)).TrimEnd('\','/')
 }
 
-function Get-GetComputerHealthScriptVersion {
-<#
-.SYNOPSIS
-Returns the embedded semantic version from a script file when present.
-.DESCRIPTION
-Returns null when the file is missing or when no supported version
-assignment is found. Writes a warning if the file exists but cannot be
-read.
-.OUTPUTS
-System.String. A version like 4.1.3, or null when no version is
-available.
-#>
-  [CmdletBinding()]
-  param([Parameter(Mandatory)][string]$ScriptPath)
-
-  if (-not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
-    return $null
-  }
-
-  try {
-    $content = Get-Content -LiteralPath $ScriptPath -Raw -ErrorAction Stop
-    $match = [regex]::Match($content, '(?im)^\s*\$VERSION\s*=\s*["''](?<version>\d+\.\d+\.\d+)["'']')
-    if ($match.Success) {
-      return $match.Groups['version'].Value
-    }
-  } catch {
-    Write-Warning ("Failed reading version from {0}: {1}" -f $ScriptPath, $_.Exception.Message)
-  }
-
-  return $null
-}
 #
 #  HELPER FUNCTIONS END
 #
@@ -2593,7 +2425,7 @@ try {
       if (-not $latestRelease) {
         $latestRelease = Get-GetComputerHealthLatestRelease -RepositoryUrl $REPO_URL -CachePath $LATEST_RELEASE_METADATA_CACHE_PATH -CacheTtlMinutes $RELEASE_METADATA_CACHE_TTL_MINUTES -ForceRefresh:$ForceRefreshReleaseMetadata
       }
-      $preparedRelease = Expand-GetComputerHealthLatestRelease -RepositoryUrl $REPO_URL -TempPath $tmdDir -ZipCacheDir $BAK_DIR -Release $latestRelease -ForceDownload:$Reinstall
+      $preparedRelease = Expand-GetComputerHealthLatestRelease -TempPath $tmdDir -ZipCacheDir $BAK_DIR -Release $latestRelease -ForceDownload:$Reinstall
       Keep-OnlyLatestReleaseZips -CacheDir $BAK_DIR -Pattern $ZIP_CACHE_PATTERN -KeepCount 4
     }
     $releaseRoot = $preparedRelease.RootPath
