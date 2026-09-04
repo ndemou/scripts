@@ -257,7 +257,105 @@ function Write-HowToCopyCode {
     Write-Host -for Cyan     "       $DEST_DIR"
 }
 
+function Install-NuGetNonInteractively {
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor
+            [Net.SecurityProtocolType]::Tls12
+
+        Get-PackageProvider `
+            -Name NuGet `
+            -ForceBootstrap `
+            -ErrorAction Stop |
+            Out-Null
+
+        Write-Host 'NuGet provider is available.' -ForegroundColor Green
+    }
+    catch {
+        Write-Host 'Failed to install/load the NuGet provider.' -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        throw
+    }
+}
+
+
+function Set-PSGalleryTrusted {
+    $repo = 'PSGallery'
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor
+            [Net.SecurityProtocolType]::Tls12
+
+        try {
+            $repository = Get-PSRepository `
+                -Name $repo `
+                -ErrorAction Stop
+        }
+        catch {
+            Register-PSRepository `
+                -Default `
+                -ErrorAction Stop
+
+            $repository = Get-PSRepository `
+                -Name $repo `
+                -ErrorAction Stop
+        }
+
+        if ($repository.InstallationPolicy -ne 'Trusted') {
+            Set-PSRepository `
+                -Name $repo `
+                -InstallationPolicy Trusted `
+                -ErrorAction Stop
+
+            Write-Host 'PSGallery has been set to Trusted.' -ForegroundColor Green
+        }
+        else {
+            Write-Host 'PSGallery is already Trusted.' -ForegroundColor Green
+        }
+    }
+    catch {
+        Write-Host 'Failed to configure PSGallery.' -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        throw
+    }
+}
+
+
+function Install-PowerShellModuleNonInteractively {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ModuleName
+    )
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor
+            [Net.SecurityProtocolType]::Tls12
+
+        Install-Module `
+            -Name $ModuleName `
+            -Repository PSGallery `
+            -Force `
+            -Confirm:$false `
+            -ErrorAction Stop
+
+        Write-Host "PowerShell module '$ModuleName' installed successfully." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Failed to install PowerShell module '$ModuleName'." -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        throw
+    }
+}
+
 mkdir -force $DEST_DIR > $null
+
+Install-NuGetNonInteractively
+Set-PSGalleryTrusted
+Install-PowerShellModuleNonInteractively -ModuleName PSWindowsUpdate
 
 $copiedFilesFromDomain = $false
 $r = Test-ShareLikelyUp -SharePath $SOURCE_DIR -DnsCidrs $MAZARS_LAN
