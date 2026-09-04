@@ -1,5 +1,4 @@
 ﻿#Requires -Version 5.1
-#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
 Enables or maintains BitLocker protection for C: and submits each
@@ -34,22 +33,28 @@ fails. The script does not remove protectors or recovery records that
 it created or submitted.
 
 A successful directory submission means Windows accepted the backup
-request. The script does not read the recovery password back from AD DS
-or Microsoft Entra ID. Verify directory visibility separately when
-operational policy requires end-to-end confirmation.
+request. After a successful AD DS submission, the script makes a
+best-effort read-only check for a child msFVE-RecoveryInformation object
+whose recovery GUID matches the local protector. Read access is not
+required: an unavailable or inconclusive check is reported but does not
+turn a successful backup into a failure. The recovery password itself is
+never read back from AD DS or Microsoft Entra ID.
 
-When it creates a recovery-password protector, the script suppresses
-the warning stream from Add-BitLockerKeyProtector so the 48-digit
-password is not written to the console or a transcript by that cmdlet.
-The script never intentionally prints or returns the recovery password.
+When it creates a recovery-password protector or enables BitLocker, the
+script suppresses the warning stream from the relevant BitLocker cmdlet
+so the 48-digit password is not written to the console or a transcript.
+Errors remain enabled. The script never intentionally prints, reads back,
+or returns the recovery password.
 
 Do not use this script while C: is being decrypted, or where another
 full-disk encryption product is active. Review applicable Group Policy
 and Intune BitLocker settings before use because policy can reject or
 alter the requested configuration.
 
-On failure, writes warnings as applicable and raises a terminating
-error. No success object is produced.
+Expected conditions that prevent the interactive workflow from
+continuing are shown as a clear red message and the script exits without
+raising an exception. Unexpected implementation, Windows, or cmdlet
+failures remain terminating errors. No success object is produced.
 
 .PARAMETER EncryptionMethod
 Specifies the requested BitLocker encryption method. Applied policy may
@@ -138,6 +143,24 @@ function Write-SuccessHeader {
     Write-Host ('  ' + $Message) -ForegroundColor White
     Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Green
 }
+function Write-Problem {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+        [string]$NextStep = ''
+    )
+    Write-Host ''
+    Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Red
+    Write-Host '  CANNOT CONTINUE' -ForegroundColor Red
+    Write-Host ('  ' + $Message) -ForegroundColor Red
+    if (-not [string]::IsNullOrWhiteSpace($NextStep)) {
+        Write-Host ''
+        Write-Host '  What to do next:' -ForegroundColor Yellow
+        Write-Host ('  ' + $NextStep) -ForegroundColor Yellow
+    }
+    Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Red
+    Write-Host ''
+}
 function Get-ErrorDescription {
     param(
         [Parameter(Mandatory = $true)]
@@ -213,6 +236,11 @@ function Get-BootProtectors {
     )
 }
 function Assert-TpmReady {
+    $result = [pscustomobject]@{
+        Ready   = $false
+        Problem = ''
+        Tpm     = $null
+    }
     if (
         -not (
             Get-Command `
@@ -220,24 +248,27 @@ function Assert-TpmReady {
                 -ErrorAction SilentlyContinue
         )
     ) {
-        throw (
+        $result.Problem = (
             'Get-Tpm is unavailable. ' +
             'The TrustedPlatformModule PowerShell module is required.'
         )
+        return $result
     }
     $tpm = Get-Tpm -ErrorAction Stop
     if (-not $tpm.TpmPresent) {
-        throw (
+        $result.Problem = (
             'No compatible TPM was detected. ' +
             'A TPM is required for unattended TPM-based OS-drive unlock.'
         )
+        return $result
     }
     if (-not $tpm.TpmReady) {
-        throw (
+        $result.Problem = (
             'The TPM is present but is not ready. ' +
             'Check tpm.msc and the UEFI or BIOS TPM configuration. ' +
             'This script will not clear or reset the TPM automatically.'
         )
+        return $result
     }
     if ($tpm.LockedOut) {
         Write-Warning (
@@ -246,9 +277,36 @@ function Assert-TpmReady {
             'is resolved.' + "`n`n"
         )
     }
-    return $tpm
+    $result.Ready = $true
+    $result.Tpm = $tpm
+    return $result
+}
+function Get-DsRegStatusValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Output,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+    $pattern = (
+        '^\s*' +
+        [regex]::Escape($Name) +
+        '\s*:\s*(.*?)\s*$'
+    )
+    foreach ($line in $Output) {
+        if ([string]$line -match $pattern) {
+            return [string]$Matches[1]
+        }
+    }
+    return $null
 }
 function Get-EntraJoinState {
+    $result = [pscustomobject]@{
+        Determined       = $false
+        AzureAdJoined    = $false
+        DomainJoined     = $false
+        DeviceAuthStatus = ''
+    }
     $dsregcmd = Join-Path `
         $env:SystemRoot `
         'System32\dsregcmd.exe'
@@ -263,7 +321,7 @@ function Get-EntraJoinState {
             "`n" + 'dsregcmd.exe was not found. ' +
             'Microsoft Entra join state could not be checked.' + "`n`n"
         )
-        return $null
+        return $result
     }
     try {
         $output = @(
@@ -277,18 +335,31 @@ function Get-EntraJoinState {
                 '. Entra escrow eligibility cannot be established.' +
                 "`n`n"
             )
-            return $null
+            return $result
         }
-        return (
-            @(
-                $output |
-                    Where-Object {
-                        [string]$_ -match (
-                            '^\s*AzureAdJoined\s*:\s*YES\s*$'
-                        )
-                    }
-            ).Count -gt 0
-        )
+        $azureAdJoined = Get-DsRegStatusValue `
+            -Output $output `
+            -Name 'AzureAdJoined'
+        if ([string]::IsNullOrWhiteSpace($azureAdJoined)) {
+            Write-Warning (
+                "`n" + 'dsregcmd.exe /status did not report AzureAdJoined. ' +
+                'Entra escrow eligibility cannot be established.' + "`n`n"
+            )
+            return $result
+        }
+        $domainJoined = Get-DsRegStatusValue `
+            -Output $output `
+            -Name 'DomainJoined'
+        $deviceAuthStatus = Get-DsRegStatusValue `
+            -Output $output `
+            -Name 'DeviceAuthStatus'
+        $result.Determined = $true
+        $result.AzureAdJoined = ($azureAdJoined -ieq 'YES')
+        $result.DomainJoined = ($domainJoined -ieq 'YES')
+        if (-not [string]::IsNullOrWhiteSpace($deviceAuthStatus)) {
+            $result.DeviceAuthStatus = $deviceAuthStatus
+        }
+        return $result
     }
     catch {
         Write-Warning (
@@ -298,7 +369,7 @@ function Get-EntraJoinState {
                     -ErrorRecord $_
             ) + "`n`n"
         )
-        return $null
+        return $result
     }
 }
 function Get-AdComputerPlacement {
@@ -366,11 +437,14 @@ function Get-AdComputerPlacement {
 function Get-AdRecoveryEscrowPolicy {
     $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\FVE'
     $result = [pscustomobject]@{
-        Determined              = $false
-        OSRecovery              = $null
-        OSActiveDirectoryBackup = $null
-        OSRecoveryPassword      = $null
-        Eligible                = $false
+        Determined                       = $false
+        OSRecovery                       = $null
+        OSActiveDirectoryBackup          = $null
+        OSRequireActiveDirectoryBackup   = $null
+        OSActiveDirectoryInfoToStore     = $null
+        OSRecoveryPassword               = $null
+        OSRecoveryKey                    = $null
+        Eligible                         = $false
     }
     try {
         if (-not (Test-Path -LiteralPath $policyPath -PathType Container)) {
@@ -383,7 +457,10 @@ function Get-AdRecoveryEscrowPolicy {
         foreach ($propertyName in @(
             'OSRecovery'
             'OSActiveDirectoryBackup'
+            'OSRequireActiveDirectoryBackup'
+            'OSActiveDirectoryInfoToStore'
             'OSRecoveryPassword'
+            'OSRecoveryKey'
         )) {
             $property = $policy.PSObject.Properties[$propertyName]
             if ($null -ne $property) {
@@ -395,7 +472,11 @@ function Get-AdRecoveryEscrowPolicy {
             $result.OSRecovery -eq 1 -and
             $result.OSActiveDirectoryBackup -eq 1 -and
             $null -ne $result.OSRecoveryPassword -and
-            $result.OSRecoveryPassword -ne 0
+            $result.OSRecoveryPassword -ne 0 -and
+            (
+                $null -eq $result.OSActiveDirectoryInfoToStore -or
+                $result.OSActiveDirectoryInfoToStore -in @(1, 2)
+            )
         )
     }
     catch {
@@ -408,20 +489,53 @@ function Get-AdRecoveryEscrowPolicy {
     }
     return $result
 }
-function Format-PolicyValue {
+function Format-FvePolicyValue {
     param(
-        [AllowNull()]
-        [object]$Value,
         [Parameter(Mandatory = $true)]
-        [scriptblock]$EnabledTest
+        [ValidateSet(
+            'OSRecovery',
+            'OSActiveDirectoryBackup',
+            'OSRequireActiveDirectoryBackup',
+            'OSActiveDirectoryInfoToStore',
+            'OSRecoveryPassword',
+            'OSRecoveryKey'
+        )]
+        [string]$Name,
+        [AllowNull()]
+        [object]$Value
     )
     if ($null -eq $Value) {
         return 'Not configured'
     }
-    if (& $EnabledTest $Value) {
-        return ([string]$Value + ' (eligible)')
+    $numericValue = [int]$Value
+    switch ($Name) {
+        { $_ -in @(
+            'OSRecovery',
+            'OSActiveDirectoryBackup',
+            'OSRequireActiveDirectoryBackup'
+        ) } {
+            if ($numericValue -eq 1) {
+                return ([string]$numericValue + ' (enabled)')
+            }
+            return ([string]$numericValue + ' (disabled)')
+        }
+        { $_ -in @('OSRecoveryPassword', 'OSRecoveryKey') } {
+            switch ($numericValue) {
+                0 { return '0 (disallowed)' }
+                1 { return '1 (required)' }
+                2 { return '2 (allowed)' }
+                default { return ([string]$numericValue + ' (unknown)') }
+            }
+        }
+        'OSActiveDirectoryInfoToStore' {
+            switch ($numericValue) {
+                1 { return '1 (recovery passwords and key packages)' }
+                2 { return '2 (recovery passwords only)' }
+                default { return ([string]$numericValue + ' (unknown)') }
+            }
+        }
     }
-    return ([string]$Value + ' (not eligible)')
+    return [string]$numericValue
 }
 function Find-AvailableDomainController {
     $result = [pscustomobject]@{
@@ -460,6 +574,109 @@ function Find-AvailableDomainController {
         }
     }
     return $result
+}
+function Test-AdRecoveryProtectorRecord {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ComputerDistinguishedName,
+        [Parameter(Mandatory = $true)]
+        [string]$ProtectorId,
+        [string]$DomainController = ''
+    )
+    $verification = [pscustomobject]@{
+        State  = 'Unavailable'
+        Detail = ''
+    }
+    if ([string]::IsNullOrWhiteSpace($ComputerDistinguishedName)) {
+        $verification.Detail = 'the AD computer DN is unknown'
+        return $verification
+    }
+    $expectedGuid = [Guid]::Parse($ProtectorId.Trim('{}'))
+    if ([string]::IsNullOrWhiteSpace($DomainController)) {
+        $ldapPath = 'LDAP://' + $ComputerDistinguishedName
+    }
+    else {
+        $ldapPath = (
+            'LDAP://' +
+            $DomainController +
+            '/' +
+            $ComputerDistinguishedName
+        )
+    }
+    $entry = $null
+    $searcher = $null
+    $results = $null
+    try {
+        $entry = New-Object `
+            -TypeName System.DirectoryServices.DirectoryEntry `
+            -ArgumentList $ldapPath
+        $searcher = New-Object `
+            -TypeName System.DirectoryServices.DirectorySearcher `
+            -ArgumentList $entry
+        $searcher.SearchScope = (
+            [System.DirectoryServices.SearchScope]::OneLevel
+        )
+        $searcher.Filter = '(objectClass=msFVE-RecoveryInformation)'
+        [void]$searcher.PropertiesToLoad.Add('msFVE-RecoveryGuid')
+        $results = $searcher.FindAll()
+        $readableGuidCount = 0
+        foreach ($found in $results) {
+            $values = $found.Properties['msfve-recoveryguid']
+            if ($null -eq $values -or $values.Count -eq 0) {
+                continue
+            }
+            $rawGuid = $values[0]
+            try {
+                if ($rawGuid -is [byte[]]) {
+                    $actualGuid = New-Object `
+                        -TypeName System.Guid `
+                        -ArgumentList (,[byte[]]$rawGuid)
+                }
+                else {
+                    $actualGuid = [Guid]::Parse([string]$rawGuid)
+                }
+            }
+            catch {
+                continue
+            }
+            $readableGuidCount++
+            if ($actualGuid -eq $expectedGuid) {
+                $verification.State = 'Verified'
+                $verification.Detail = (
+                    'matching msFVE-RecoveryInformation object is readable'
+                )
+                return $verification
+            }
+        }
+        $verification.State = 'Not confirmed'
+        if ($readableGuidCount -eq 0) {
+            $verification.Detail = (
+                'no readable matching recovery GUID was visible; ' +
+                'read permission or directory replication may be the reason'
+            )
+        }
+        else {
+            $verification.Detail = (
+                'recovery objects were readable, but none matched this protector'
+            )
+        }
+    }
+    catch {
+        $verification.State = 'Unavailable'
+        $verification.Detail = Get-ErrorDescription -ErrorRecord $_
+    }
+    finally {
+        if ($null -ne $results) {
+            $results.Dispose()
+        }
+        if ($null -ne $searcher) {
+            $searcher.Dispose()
+        }
+        if ($null -ne $entry) {
+            $entry.Dispose()
+        }
+    }
+    return $verification
 }
 function Get-PolicyEncryptionMethod {
     $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\FVE'
@@ -760,7 +977,7 @@ function Invoke-RecoveryEscrow {
     }
 }
 try {
-    Write-Step 'Preflight checks (is everything allright to proceed?)'
+    Write-Step 'Preflight checks (is everything all right to proceed?)'
     $currentIdentity = (
         [Security.Principal.WindowsIdentity]::GetCurrent()
     )
@@ -771,14 +988,27 @@ try {
         [Security.Principal.WindowsBuiltInRole]::Administrator
     )
     if (-not $isAdministrator) {
-        throw (
-            'Run this script from an elevated Windows PowerShell session.'
-        )
+        Write-Problem `
+            -Message 'This PowerShell session is not running as Administrator.' `
+            -NextStep (
+                'Close this window, open Windows PowerShell with ' +
+                'Run as administrator, and run the script again.'
+            )
+        return
     }
     Write-Field `
         -Label 'Identity' `
         -Value $currentIdentity.Name
     #Write-Step 'Loading and checking BitLocker support'
+    if (-not (Get-Module -ListAvailable -Name BitLocker)) {
+        Write-Problem `
+            -Message 'The Windows BitLocker PowerShell module is unavailable.' `
+            -NextStep (
+                'Run the script on a supported Windows edition with the ' +
+                'BitLocker management tools installed.'
+            )
+        return
+    }
     Import-Module BitLocker `
         -DisableNameChecking `
         -ErrorAction Stop
@@ -796,11 +1026,17 @@ try {
                     -ErrorAction SilentlyContinue
             )
         ) {
-            throw (
-                "Required BitLocker command '" +
-                $commandName +
-                "' is unavailable."
-            )
+            Write-Problem `
+                -Message (
+                    "The required BitLocker command '" +
+                    $commandName +
+                    "' is unavailable."
+                ) `
+                -NextStep (
+                    'Repair or reinstall the Windows BitLocker management ' +
+                    'tools, then run the script again.'
+                )
+            return
         }
     }
     #Write-Step 'Checking domain and Microsoft Entra join state'
@@ -812,6 +1048,15 @@ try {
     $aadEscrowEligible = $false
     $adPrerequisiteIssues = @()
     $aadPrerequisiteIssues = @()
+    $placement = [pscustomobject]@{
+        Determined        = $false
+        DistinguishedName = ''
+        DefaultComputers  = $false
+    }
+    $domainController = [pscustomobject]@{
+        Available        = $false
+        DomainController = ''
+    }
     if ($domainJoined) {
         Write-Field `
             -Label 'AD DS join' `
@@ -838,23 +1083,44 @@ try {
         Write-Field `
             -Label 'OSRecovery' `
             -Value (
-                Format-PolicyValue `
-                    -Value $adPolicy.OSRecovery `
-                    -EnabledTest { param($value) [int]$value -eq 1 }
-            )
-        Write-Field `
-            -Label 'OSActiveDirectoryBackup' `
-            -Value (
-                Format-PolicyValue `
-                    -Value $adPolicy.OSActiveDirectoryBackup `
-                    -EnabledTest { param($value) [int]$value -eq 1 }
+                Format-FvePolicyValue `
+                    -Name 'OSRecovery' `
+                    -Value $adPolicy.OSRecovery
             )
         Write-Field `
             -Label 'OSRecoveryPassword' `
             -Value (
-                Format-PolicyValue `
-                    -Value $adPolicy.OSRecoveryPassword `
-                    -EnabledTest { param($value) [int]$value -ne 0 }
+                Format-FvePolicyValue `
+                    -Name 'OSRecoveryPassword' `
+                    -Value $adPolicy.OSRecoveryPassword
+            )
+        Write-Field `
+            -Label 'OSRecoveryKey' `
+            -Value (
+                Format-FvePolicyValue `
+                    -Name 'OSRecoveryKey' `
+                    -Value $adPolicy.OSRecoveryKey
+            )
+        Write-Field `
+            -Label 'OSActiveDirectoryBackup' `
+            -Value (
+                Format-FvePolicyValue `
+                    -Name 'OSActiveDirectoryBackup' `
+                    -Value $adPolicy.OSActiveDirectoryBackup
+            )
+        Write-Field `
+            -Label 'OSRequireActiveDirectoryBackup' `
+            -Value (
+                Format-FvePolicyValue `
+                    -Name 'OSRequireActiveDirectoryBackup' `
+                    -Value $adPolicy.OSRequireActiveDirectoryBackup
+            )
+        Write-Field `
+            -Label 'OSActiveDirectoryInfoToStore' `
+            -Value (
+                Format-FvePolicyValue `
+                    -Name 'OSActiveDirectoryInfoToStore' `
+                    -Value $adPolicy.OSActiveDirectoryInfoToStore
             )
         if (-not $adPolicy.Determined) {
             $adPrerequisiteIssues += (
@@ -896,11 +1162,30 @@ try {
             -Kind Info `
             -Message 'Device is not domain joined; AD DS escrow is not applicable'
     }
-    $entraJoined = Get-EntraJoinState
-    if ($entraJoined -eq $true) {
+    $entraState = Get-EntraJoinState
+    if ($entraState.Determined -and $entraState.AzureAdJoined) {
+        if ($entraState.DomainJoined) {
+            $entraJoinText = 'Yes - Hybrid joined'
+        }
+        else {
+            $entraJoinText = 'Yes'
+        }
         Write-Field `
             -Label 'Microsoft Entra join' `
-            -Value 'Yes'
+            -Value $entraJoinText
+        if (-not [string]::IsNullOrWhiteSpace($entraState.DeviceAuthStatus)) {
+            Write-Field `
+                -Label 'Entra DeviceAuthStatus' `
+                -Value $entraState.DeviceAuthStatus
+            if ($entraState.DeviceAuthStatus -ine 'SUCCESS') {
+                Write-Warning (
+                    "`n" + 'The device is Microsoft Entra joined, but ' +
+                    'DeviceAuthStatus is ' +
+                    $entraState.DeviceAuthStatus +
+                    '. The registration may not be healthy.' + "`n`n"
+                )
+            }
+        }
         if (
             Get-Command `
                 -Name BackupToAAD-BitLockerKeyProtector `
@@ -914,7 +1199,7 @@ try {
             )
         }
     }
-    elseif ($entraJoined -eq $false) {
+    elseif ($entraState.Determined) {
         Write-Field -Label 'Microsoft Entra join' -Value 'No'
         $aadPrerequisiteIssues += 'device is not Microsoft Entra joined'
         Write-Status `
@@ -930,33 +1215,51 @@ try {
         )
         Write-Status `
             -Kind Info `
-            -Message 'Entra escrow is not applicable without a confirmed join'
+            -Message 'Entra escrow is unavailable without a confirmed join'
     }
     if ($adEscrowEligible) {
         Write-Field -Label 'AD DS escrow preflight' -Value 'Eligible'
     }
     else {
+        if (-not $domainJoined) {
+            $adPreflightState = 'Not applicable - '
+        }
+        else {
+            $adPreflightState = 'Unavailable - '
+        }
         Write-Field `
             -Label 'AD DS escrow preflight' `
-            -Value ('Not applicable - ' + ($adPrerequisiteIssues -join '; '))
+            -Value ($adPreflightState + ($adPrerequisiteIssues -join '; '))
     }
     if ($aadEscrowEligible) {
         Write-Field -Label 'Entra escrow preflight' -Value 'Eligible'
     }
     else {
+        if ($entraState.Determined -and -not $entraState.AzureAdJoined) {
+            $entraPreflightState = 'Not applicable - '
+        }
+        else {
+            $entraPreflightState = 'Unavailable - '
+        }
         Write-Field `
             -Label 'Entra escrow preflight' `
-            -Value ('Not applicable - ' + ($aadPrerequisiteIssues -join '; '))
+            -Value ($entraPreflightState + ($aadPrerequisiteIssues -join '; '))
     }
     if (-not $adEscrowEligible -and -not $aadEscrowEligible) {
-        throw (
-            'No usable recovery escrow destination is currently available. ' +
-            'AD DS: ' +
-            ($adPrerequisiteIssues -join '; ') +
-            '. Microsoft Entra ID: ' +
-            ($aadPrerequisiteIssues -join '; ') +
-            '. No recovery-password protector was created.'
-        )
+        Write-Problem `
+            -Message (
+                'No usable recovery escrow destination is currently ' +
+                'available. No recovery-password protector was created.'
+            ) `
+            -NextStep (
+                'Resolve at least one destination and run the script again. ' +
+                'AD DS: ' +
+                ($adPrerequisiteIssues -join '; ') +
+                '. Microsoft Entra ID: ' +
+                ($aadPrerequisiteIssues -join '; ') +
+                '.'
+            )
+        return
     }
     # Write-Step 'Checking Secure Boot'
     if (
@@ -997,17 +1300,22 @@ try {
     $volume = Get-SystemBitLockerVolume
     $initialStatus = [string]$volume.VolumeStatus
     if ([string]$volume.VolumeType -ne 'OperatingSystem') {
-        throw (
-            $MountPoint +
-            ' is not reported as the Windows operating-system volume.'
-        )
+        Write-Problem `
+            -Message (
+                $MountPoint +
+                ' is not reported as the Windows operating-system volume.'
+            ) `
+            -NextStep 'Run this script only for the Windows OS volume.'
+        return
     }
     if ([string]$volume.LockStatus -ne 'Unlocked') {
-        throw (
-            $MountPoint +
-            ' is unexpectedly locked. ' +
-            'The running Windows OS drive must be unlocked.'
-        )
+        Write-Problem `
+            -Message (
+                $MountPoint +
+                ' is locked. The running Windows OS drive must be unlocked.'
+            ) `
+            -NextStep 'Unlock the drive, then run the script again.'
+        return
     }
     Write-Field `
         -Label 'Volume status' `
@@ -1026,19 +1334,22 @@ try {
         )
     switch ($initialStatus) {
         'DecryptionInProgress' {
-            throw (
-                $MountPoint +
-                ' is currently being decrypted. ' +
-                'The script will not reverse an active decryption ' +
-                'operation automatically.'
-            )
+            Write-Problem `
+                -Message ($MountPoint + ' is currently being decrypted.') `
+                -NextStep (
+                    'Allow the current operation to finish or manage it ' +
+                    'explicitly before running this script again.'
+                )
+            return
         }
         'DecryptionPaused' {
-            throw (
-                $MountPoint +
-                ' has paused decryption. ' +
-                'The script will not reverse that operation automatically.'
-            )
+            Write-Problem `
+                -Message ($MountPoint + ' has a paused decryption operation.') `
+                -NextStep (
+                    'Resolve the paused decryption explicitly before running ' +
+                    'this script again.'
+                )
+            return
         }
         'FullyDecrypted' {
             Write-Warning (
@@ -1165,6 +1476,52 @@ try {
     foreach ($protectorId in $escrow.AadFailedProtectorIds) {
         Write-Field -Label 'Entra failed protector' -Value $protectorId
     }
+    $adVerificationResults = @()
+    if ($escrow.AdEscrowedProtectorIds.Count -gt 0) {
+        Write-Step 'Verifying AD DS escrow visibility (best effort)'
+        foreach ($protectorId in $escrow.AdEscrowedProtectorIds) {
+            if ($placement.Determined) {
+                $verification = Test-AdRecoveryProtectorRecord `
+                    -ComputerDistinguishedName $placement.DistinguishedName `
+                    -ProtectorId $protectorId `
+                    -DomainController $domainController.DomainController
+            }
+            else {
+                $verification = [pscustomobject]@{
+                    State  = 'Unavailable'
+                    Detail = 'the AD computer DN could not be determined'
+                }
+            }
+            $adVerificationResults += [pscustomobject]@{
+                ProtectorId = $protectorId
+                State       = $verification.State
+                Detail      = $verification.Detail
+            }
+            Write-Field `
+                -Label 'AD DS escrow verification' `
+                -Value (
+                    $verification.State +
+                    ' - ' +
+                    $protectorId
+                )
+            if ($verification.State -eq 'Verified') {
+                Write-Status `
+                    -Kind Success `
+                    -Message $verification.Detail
+            }
+            else {
+                Write-Warning (
+                    "`n" + 'AD DS escrow verification was ' +
+                    $verification.State.ToLowerInvariant() +
+                    ' for protector ' +
+                    $protectorId +
+                    ': ' +
+                    $verification.Detail +
+                    '. The successful backup result is retained.' + "`n`n"
+                )
+            }
+        }
+    }
     if (-not $escrow.AtLeastOneSaved) {
         $failureLines = @()
         $failureLines += @($escrow.AdFailureDetails)
@@ -1183,17 +1540,18 @@ try {
                 'The existing BitLocker state was left intact.'
             )
         }
-        throw (
-            'No recovery-password protector could be escrowed to either ' +
-            'AD DS or Microsoft Entra ID.' +
-            [Environment]::NewLine +
-            $stateText +
-            [Environment]::NewLine +
-            'Failures:' +
-            [Environment]::NewLine +
-            ' - ' +
-            $failureText
-        )
+        Write-Problem `
+            -Message (
+                'No recovery-password protector could be escrowed to ' +
+                'AD DS or Microsoft Entra ID. ' +
+                $stateText
+            ) `
+            -NextStep (
+                'Correct the directory backup failures, then run the script ' +
+                'again. Failures: ' +
+                $failureText
+            )
+        return
     }
     if (
         $adEscrowEligible -and
@@ -1229,12 +1587,22 @@ try {
                     -Message (
                         'No boot protector found; checking the TPM'
                     )
-                $null = Assert-TpmReady
+                $tpmReadiness = Assert-TpmReady
+                if (-not $tpmReadiness.Ready) {
+                    Write-Problem `
+                        -Message $tpmReadiness.Problem `
+                        -NextStep (
+                            'Resolve the TPM condition, then run the script ' +
+                            'again. No encryption was started.'
+                        )
+                    return
+                }
                 $enableParameters = @{
                     MountPoint       = $MountPoint
                     EncryptionMethod = $effectiveEncryptionMethod
                     TpmProtector     = $true
                     Confirm          = $false
+                    WarningAction    = 'SilentlyContinue'
                     ErrorAction      = 'Stop'
                 }
                 if ($UsedSpaceOnly) {
@@ -1301,7 +1669,7 @@ try {
     $currentStatus = [string]$volume.VolumeStatus
     $currentProtection = [string]$volume.ProtectionStatus
     if (
-        $currentStatus -ne 'FullyDecrypted' -and
+        $currentStatus -eq 'FullyEncrypted' -and
         $currentProtection -eq 'Off'
     ) {
         Write-Warning (
@@ -1448,9 +1816,12 @@ try {
 catch {
     $message = Get-ErrorDescription `
         -ErrorRecord $_
-    Write-Warning (
-        "`n" + 'BITLOCKER CONFIGURATION FAILED: ' +
-        $message + "`n`n"
-    )
+    Write-Problem `
+        -Message 'BitLocker configuration stopped because of an unexpected error.' `
+        -NextStep (
+            'Review the technical error below, correct the underlying ' +
+            'Windows or PowerShell problem, and run the script again. ' +
+            $message
+        )
     throw
 }
