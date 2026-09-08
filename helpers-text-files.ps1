@@ -1250,9 +1250,42 @@ error when building the hashtable.
             "$([char]0x201D)" = '"'   # Right Double Quotation Mark
             "$([char]0x2018)" = "'"   # Left Single Quotation Mark
             "$([char]0x2019)" = "'"   # Right Single Quotation Mark
-            "$([char]0x2014)" = '-'   # Em Dash
+            # Straight dash and minus variants; one ASCII hyphen per character.
+            "$([char]0x02D7)" = '-'   # Modifier Letter Minus Sign
+            "$([char]0x2010)" = '-'   # Hyphen
+            "$([char]0x2011)" = '-'   # Non-Breaking Hyphen
+            "$([char]0x2012)" = '-'   # Figure Dash
             "$([char]0x2013)" = '-'   # En Dash
+            "$([char]0x2014)" = '-'   # Em Dash
+            "$([char]0x2015)" = '-'   # Horizontal Bar
+            "$([char]0x2043)" = '-'   # Hyphen Bullet
+            "$([char]0x207B)" = '-'   # Superscript Minus
+            "$([char]0x208B)" = '-'   # Subscript Minus
             "$([char]0x2212)" = '-'   # Minus Sign
+            "$([char]0x23AF)" = '-'   # Horizontal Line Extension
+            "$([char]0x23E4)" = '-'   # Straightness
+            "$([char]0x2796)" = '-'   # Heavy Minus Sign
+            "$([char]0x2E3A)" = '-'   # Two-Em Dash
+            "$([char]0x2E3B)" = '-'   # Three-Em Dash
+            "$([char]0xFE58)" = '-'   # Small Em Dash
+            "$([char]0xFE63)" = '-'   # Small Hyphen-Minus
+            "$([char]0xFF0D)" = '-'   # Fullwidth Hyphen-Minus
+            # Horizontal box-drawing lines, including dashed and half lines.
+            "$([char]0x2500)" = '-'   # Box Drawings Light Horizontal
+            "$([char]0x2501)" = '-'   # Box Drawings Heavy Horizontal
+            "$([char]0x2504)" = '-'   # Box Drawings Light Triple Dash Horizontal
+            "$([char]0x2505)" = '-'   # Box Drawings Heavy Triple Dash Horizontal
+            "$([char]0x2508)" = '-'   # Box Drawings Light Quadruple Dash Horizontal
+            "$([char]0x2509)" = '-'   # Box Drawings Heavy Quadruple Dash Horizontal
+            "$([char]0x254C)" = '-'   # Box Drawings Light Double Dash Horizontal
+            "$([char]0x254D)" = '-'   # Box Drawings Heavy Double Dash Horizontal
+            "$([char]0x2550)" = '='   # Box Drawings Double Horizontal
+            "$([char]0x2574)" = '-'   # Box Drawings Light Left
+            "$([char]0x2576)" = '-'   # Box Drawings Light Right
+            "$([char]0x2578)" = '-'   # Box Drawings Heavy Left
+            "$([char]0x257A)" = '-'   # Box Drawings Heavy Right
+            "$([char]0x257C)" = '-'   # Box Drawings Light Left And Heavy Right
+            "$([char]0x257E)" = '-'   # Box Drawings Heavy Left And Light Right
             "$([char]0x2026)" = '...' # Horizontal Ellipsis
             "$([char]0x00A0)" = ' '   # NBSP
             "$([char]0x202F)" = ' '   # NNBSP
