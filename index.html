@@ -485,8 +485,9 @@
             <p class="function-synopsis">Searches and replaces text in files while maintaining the existing text encoding (but will switch ASCII to UTF8 if replacement is unicode).</p>
             <details class="script-details function-details">
               <summary>Read more</summary>
-              <p class="script-details-text">Performs an in-place regex (or literal) search/replace on a text file,<br>while preserving the file&#x27;s actual encoding. For _really_ hard cases it<br>may mistake the encoding. In such cases it may fail to find the pattern<br>and/or change the encoding of the input file.</p>
-              <p class="script-details-text">You may pass wildcards like &quot;*.txt&quot; to -File.</p>
+              <p class="script-details-text">Performs an in-place regex (or literal) search/replace on a text file,<br>while preserving the file&#x27;s actual encoding. Files with multiple hardlinks<br>are overwritten through their existing file record, preserving the link<br>relationship and updating the content visible through every linked name.<br>This hardlink-preserving write is not atomic. Files without multiple<br>hardlinks continue to use a temporary-file replacement.</p>
+              <p class="script-details-text">For _really_ hard cases the function may mistake the encoding. In such<br>cases it may fail to find the pattern and/or change the encoding of the<br>input file.</p>
+              <p class="script-details-text">You may pass wildcards like &quot;*.txt&quot; to -File.<br>If several matched names are hardlinks to the same file, that file is edited<br>only once. Subsequent names report &quot;Already processed hardlink&quot;.</p>
               <p class="script-details-text">To apply one substitution use `-Patern &#x27;a&#x27; -Replacement &#x27;b&#x27;`. To apply<br>multiple substitutions use `-ReplaceMap` (see examples).</p>
               <p class="script-details-text">Without -Literal considers Pattern(s) to be a regex pattern.</p>
               <p class="script-details-text">By default keeps a backup with .bak extension. To skip the Backup<br>use -Backup &quot;&quot;. To change the extension use -Backup &quot;ext&quot;.</p>
@@ -497,7 +498,8 @@
               <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Edit-TextFile -file .\ansi.txt -Pattern &quot;foo&quot; -Replacement=&quot;_FOO_&quot;</p>
               <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Edit-TextFile -file .\ansi.txt -Pattern &quot;foo?&quot; -Replacement=&quot;_FOO_?&quot; -Literal</p>
               <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Edit-TextFile -file .\ansi.txt -ReplaceMap ([ordered]@{&quot;foo&quot;=&quot;_FOO_&quot;; &quot;bar&quot;=&quot;_BAR_&quot;})</p>
-              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>The operation writes modified content to temporary storage before<br>replacing the target file. Original files are backed up prior to the<br>modification. If a terminating error occurs during the file swap, the<br>target file might remain in its prior state and intermediate temporary<br>files might remain on the storage volume.</p>
+              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>The operation writes modified content to temporary storage before the<br>commit. For files without multiple hardlinks, the temporary file replaces<br>the target atomically where supported. For files with multiple hardlinks,<br>the existing file record is overwritten after a backup is created; this<br>preserves all hardlinks but a crash can expose partial content. If that<br>write fails, the function attempts to restore the original bytes through<br>the same file record.</p>
+              <p class="script-details-text">Original files are backed up prior to modification. If a terminating<br>error occurs during the commit, intermediate files might remain on the<br>storage volume.</p>
               <p class="script-details-text">Files exceeding the configured maximum size limit or containing no<br>data are skipped. Substitutions are evaluated sequentially.</p>
             </details>
           </div>
@@ -537,15 +539,15 @@
             <p class="function-synopsis">Replaces a file&#x27;s contents with specified bytes, optionally retaining a backup.</p>
             <details class="script-details function-details">
               <summary>Read more</summary>
-              <p class="script-details-text">Behavior and guarantees:<br>- Writes the new content to -TmpPath first, then attempts to replace -ResolvedPath with it.<br>- Primary path uses [IO.File]::Replace(), which is the best option on local NTFS:<br>* Readers see either the old or the new file, not a partially-written file.<br>* A backup at -BakPath is created/overwritten as part of the replace.<br>- If Replace() fails (common on non-NTFS volumes, SMB shares with varying semantics, or transient locks<br>e.g. AV/OneDrive/indexing), it falls back to Copy-Item + Move-Item with best-effort rollback:<br>* This fallback is NOT atomic. It is provided for compatibility and &quot;works in more places&quot;.<br>* If the move fails after the backup copy, the function attempts to restore from -BakPath.</p>
+              <p class="script-details-text">Behavior and guarantees:<br>- Writes the new content to -TmpPath first.<br>- If -ResolvedPath has multiple hardlinks, overwrites it through its existing file record:<br>* The file ID and hardlink relationship are preserved.<br>* Every hardlinked name sees the new content.<br>* The write is NOT atomic. If it fails, the function attempts an in-place restore from -BakPath.<br>- Otherwise, the primary path uses [IO.File]::Replace(), which is the best option on local NTFS:<br>* Readers see either the old or the new file, not a partially-written file.<br>* A backup at -BakPath is created/overwritten as part of the replace.<br>- If Replace() fails (common on non-NTFS volumes, SMB shares with varying semantics, or transient locks<br>e.g. AV/OneDrive/indexing), it falls back to Copy-Item + Move-Item with best-effort rollback:<br>* This fallback is NOT atomic. It is provided for compatibility and &quot;works in more places&quot;.<br>* If the move fails after the backup copy, the function attempts to restore from -BakPath.</p>
               <p class="script-details-text">Backup semantics:<br>- -BakPath is always used as the safety copy when swapping.<br>- If -UserBackup is $true, -BakPath is considered caller-visible and is preserved.<br>- If -UserBackup is $false, -BakPath is a transient safety backup and may be deleted on success.</p>
-              <p class="script-details-text">Cleanup:<br>- Always attempts to delete -TmpPath in a finally block.<br>- Does not promise preservation of metadata/streams in the fallback path (ACLs, ADS, timestamps, etc.)<br>beyond what the underlying filesystem/provider naturally keeps.</p>
+              <p class="script-details-text">Cleanup:<br>- Always attempts to delete a temporary file created by this call in a finally block.<br>A preexisting -TmpPath is rejected and left untouched.<br>- Does not promise preservation of metadata/streams in the copy/move fallback path (ACLs, ADS, timestamps, etc.)<br>beyond what the underlying filesystem/provider naturally keeps.</p>
               <p class="script-details-text">.PARAMETER ResolvedPath<br>The existing target file to be replaced (must be on the same volume as -TmpPath for best behavior).</p>
-              <p class="script-details-text">.PARAMETER TmpPath<br>A temp file path in the same directory as the target (recommended) containing the new bytes to commit.</p>
+              <p class="script-details-text">.PARAMETER TmpPath<br>A new, unused temp file path in the same directory as the target (recommended).<br>Existing paths are rejected to avoid overwriting or deleting another file or hardlink.</p>
               <p class="script-details-text">.PARAMETER BakPath<br>Path for the backup copy used during the swap. May be a user-requested backup (kept) or a transient one.</p>
               <p class="script-details-text">.PARAMETER UserBackup<br>Indicates whether -BakPath is user-requested (keep it) or internal/transient (delete on success).</p>
               <p class="script-details-text">.PARAMETER Bytes<br>The final bytes to be written/committed to the target file.</p>
-              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>- Intended for &quot;in-place update&quot; workflows: generate full new content, then commit in one swap.<br>- For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy<br>around the Replace() stage (if not implemented inside this function).</p>
+              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>- Hardlink detection uses the FileSystem provider&#x27;s LinkType property. A detection failure stops the operation<br>before the target is modified rather than risking an unnoticed hardlink break.<br>- -StrictAtomic rejects a hardlinked target because preserving its file record requires a non-atomic write.<br>- The target, temporary file, and backup must be distinct. A backup hardlinked to the target is rejected.<br>- Windows file IDs are used to detect backup aliases and duplicate wildcard targets; failure to obtain<br>a required identity stops that edit before any target content is modified.<br>- For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy<br>around the Replace() stage (if not implemented inside this function).</p>
             </details>
           </div>
           <div class="function-entry">
@@ -726,6 +728,27 @@
       </li>
       <li class="script-item">
         <div class="script-header">
+          <a class="script-link" href="Test-WorkstationDomainConnectivity.ps1">Test-WorkstationDomainConnectivity.ps1</a>
+          <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Test-WorkstationDomainConnectivity.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Test-WorkstationDomainConnectivity.ps1" aria-label="Copy download command for Test-WorkstationDomainConnectivity.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
+        </div>
+          <p class="script-synopsis">Performs read-only, workstation-side Active Directory connectivity diagnostics.</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <p class="script-details-text">Tests domain membership, required services, DNS and SRV discovery, DC Locator,<br>routes, required client-to-DC TCP ports, the Netlogon RPC interface when<br>rpcping.exe is available, LDAP RootDSE, SYSVOL access when the current user is<br>a domain user, time offset, Kerberos tickets, and secure-channel indicators.</p>
+          <p class="script-details-text">The script deliberately does not repair or reset the secure channel, restart<br>services, flush caches, force DC discovery, or change the machine password.</p>
+          <p class="script-details-text">.PARAMETER DomainName<br>DNS name of the Active Directory domain. When omitted, the computer&#x27;s joined<br>domain is used.</p>
+          <p class="script-details-text">.PARAMETER MaxDomainControllers<br>Maximum number of discovered domain controllers to test. The default is 8.</p>
+          <p class="script-details-text">.PARAMETER TcpTimeoutMilliseconds<br>Timeout for each TCP connection attempt. The default is 1000 milliseconds.</p>
+          <p class="script-details-text">.PARAMETER IncludeOptionalPorts<br>Also tests LDAPS 636, Global Catalog 3268/3269, and AD Web Services 9389.<br>Failure of an optional port is a warning, not a domain-health failure.</p>
+          <p class="script-details-text">.PARAMETER SkipSecureChannel<br>Skips all Test-ComputerSecureChannel checks, both the Windows-selected<br>domain controller and each individual domain controller.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Test-WorkstationDomainConnectivity.ps1 -SkipSecureChannel</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Test-WorkstationDomainConnectivity.ps1</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\Test-WorkstationDomainConnectivity.ps1 -IncludeOptionalPorts</p>
+          <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>Compatible with Windows PowerShell 5.1. Run elevated for the broadest coverage.<br>The script writes only color-coded console messages and returns no objects.<br>Passwords, packet contents, and historical event logs are never collected.</p>
+        </details>
+      </li>
+      <li class="script-item">
+        <div class="script-header">
           <a class="script-link" href="update-all-github-ndemou-scripts.ps1">update-all-github-ndemou-scripts.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;update-all-github-ndemou-scripts.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for update-all-github-ndemou-scripts.ps1" aria-label="Copy download command for update-all-github-ndemou-scripts.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
@@ -836,7 +859,7 @@
       Source repository:
       <a href="https://github.com/ndemou/scripts">github.com/ndemou/scripts</a>
     </p>
-    <p class="footer">Last updated at 2026-09-04 11:23 UTC</p>
+    <p class="footer">Last updated at 2026-09-08 13:14 UTC</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {

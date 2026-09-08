@@ -58,6 +58,16 @@ function New-TestFile {
   return $path
 }
 
+function Get-TestFileId {
+  param([Parameter(Mandatory)][string]$Path)
+
+  $output = @(& fsutil.exe file queryfileid $Path 2>&1)
+  if ($LASTEXITCODE -ne 0 -or $output.Count -eq 0) {
+    throw "Could not query the file ID for '$Path': $($output -join ' ')"
+  }
+  return ($output -join "`n")
+}
+
 function Invoke-TestCase {
   param(
     [Parameter(Mandatory)][string]$Name,
@@ -77,10 +87,13 @@ $tests = @(
     Name = 'Regex replacement updates content and creates backup'
     Body = {
       $file = New-TestFile -Directory $tempRoot -Name 'regex.ps1' -Content "alpha`r`nbeta`r`n" -Utf8Bom
+      $fileIdBefore = Get-TestFileId -Path $file
       $result = Edit-TextFile -File $file -Pattern 'beta' -Replacement 'gamma'
+      $fileIdAfter = Get-TestFileId -Path $file
 
       Assert-True ($result.Changed) 'Expected regex replacement to report Changed=$true.'
       Assert-Equal $result.Details 'Changes made' 'Unexpected Details for regex replacement.'
+      Assert-True ($fileIdAfter -cne $fileIdBefore) 'Expected an ordinary file to retain the atomic replacement behavior and receive a new file ID.'
       Assert-Equal ([System.IO.File]::ReadAllText($file)) "alpha`r`ngamma`r`n" 'Regex replacement did not update file contents.'
       Assert-True (Test-Path -LiteralPath "$file.bak") 'Expected default backup file to be created.'
       Assert-Equal ([System.IO.File]::ReadAllText("$file.bak")) "alpha`r`nbeta`r`n" 'Backup file did not preserve original content.'
@@ -95,6 +108,30 @@ $tests = @(
       Assert-True ($result.Changed) 'Expected literal replacement to report Changed=$true.'
       Assert-Equal ([System.IO.File]::ReadAllText($file)) 'bar + bar' 'Literal replacement did not treat the pattern as plain text.'
       Assert-True (-not (Test-Path -LiteralPath "$file.bak")) 'Did not expect a backup file when -Backup "" is used.'
+    }
+  },
+  @{
+    Name = 'Hardlinked file is overwritten in place and keeps every link'
+    Body = {
+      $file = New-TestFile -Directory $tempRoot -Name 'hardlink-original.ps1' -Content 'before hardlink edit'
+      $linkedFile = Join-Path $tempRoot 'hardlink-sibling.ps1'
+      New-Item -ItemType HardLink -Path $linkedFile -Target $file -ErrorAction Stop | Out-Null
+      $fileIdBefore = Get-TestFileId -Path $file
+
+      Assert-Equal (Get-TestFileId -Path $linkedFile) $fileIdBefore 'Hardlink fixture did not start with the same file ID.'
+
+      $result = Edit-TextFile -File $file -Pattern 'before' -Replacement 'after'
+      $fileIdAfter = Get-TestFileId -Path $file
+
+      Assert-True ($result.Changed) 'Expected the hardlinked replacement to report Changed=$true.'
+      Assert-Equal $fileIdAfter $fileIdBefore 'Editing a hardlinked file changed its file ID.'
+      Assert-Equal (Get-TestFileId -Path $linkedFile) $fileIdBefore 'The sibling hardlink no longer refers to the original file record.'
+      Assert-Equal ([System.IO.File]::ReadAllText($file)) 'after hardlink edit' 'The requested hardlink name did not receive the new content.'
+      Assert-Equal ([System.IO.File]::ReadAllText($linkedFile)) 'after hardlink edit' 'The sibling hardlink did not receive the new content.'
+      Assert-Equal ([string](Get-Item -LiteralPath $file).LinkType) 'HardLink' 'The requested path is no longer reported as a hardlink.'
+      Assert-True (Test-Path -LiteralPath "$file.bak") 'Expected a backup for the hardlink-preserving write.'
+      Assert-Equal ([System.IO.File]::ReadAllText("$file.bak")) 'before hardlink edit' 'The hardlink backup did not preserve the original content.'
+      Assert-True ((Get-TestFileId -Path "$file.bak") -cne $fileIdBefore) 'The backup must be an independent file rather than another link to the modified record.'
     }
   },
   @{

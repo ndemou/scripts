@@ -98,7 +98,8 @@ function _Etf_EncodeWithBom {
   $all=New-Object byte[] ($pre.Length + $body.Length)
   if($pre.Length){ [Array]::Copy($pre,0,$all,0,$pre.Length) }
   if($body.Length){ [Array]::Copy($body,0,$all,$pre.Length,$body.Length) }
-  $all
+  # Preserve the byte-array object even when the encoded text is empty.
+  return ,$all
 }
 
 
@@ -120,6 +121,80 @@ function _Etf_GetSwapPaths {
 
   [pscustomobject]@{ Tmp=$tmp; Bak=$bak; UserBackup=$userBackup }
 }
+
+<# Returns $true when the FileSystem provider reports that the target currently has multiple hardlink names. #>
+function _Etf_TestHasMultipleHardLinks {
+  [CmdletBinding()] param([Parameter(Mandatory)][string]$ResolvedPath)
+
+  $item = Get-Item -LiteralPath $ResolvedPath -Force -ErrorAction Stop
+  $linkTypeProperty = $item.PSObject.Properties['LinkType']
+  if($null -eq $linkTypeProperty){
+    throw "Edit-TextFile: Cannot determine whether the file has multiple hardlinks because the FileSystem provider does not expose LinkType: $ResolvedPath"
+  }
+
+  [string]::Equals([string]$linkTypeProperty.Value, 'HardLink', [StringComparison]::OrdinalIgnoreCase)
+}
+
+<# Identifies a Windows file record independently of its filename (including hardlink aliases). #>
+function _Etf_GetFileIdentity {
+  [CmdletBinding()] param([Parameter(Mandatory)][string]$ResolvedPath)
+
+  if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){
+    throw 'Edit-TextFile: Hardlink identity checks require Windows.'
+  }
+  if(-not ('EtfNative.FileIdentity' -as [type])){
+    # FILE_ID_INFO combines a volume serial number with a 128-bit file ID.
+    # https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_id_info
+    Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace EtfNative {
+    public static class FileIdentity {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdInfo {
+            public ulong VolumeSerialNumber;
+            public ulong IdLow;
+            public ulong IdHigh;
+        }
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandleEx(
+            SafeFileHandle handle, int informationClass, out FileIdInfo information, uint bufferSize);
+        public static string Get(SafeFileHandle handle) {
+            FileIdInfo info;
+            if (!GetFileInformationByHandleEx(handle, 18, out info, 24))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return info.VolumeSerialNumber.ToString("X16") + ":" +
+                info.IdHigh.ToString("X16") + info.IdLow.ToString("X16");
+        }
+    }
+}
+'@
+  }
+  $stream = [IO.File]::Open($ResolvedPath, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+    ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+  try { [EtfNative.FileIdentity]::Get($stream.SafeFileHandle) }
+  finally { $stream.Dispose() }
+}
+
+<# Overwrites an existing file through its current file record. This preserves hardlinks but is not atomic. #>
+function _Etf_WriteBytesInPlace {
+  [CmdletBinding()] param(
+    [Parameter(Mandatory)][string]$ResolvedPath,
+    [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes
+  )
+
+  $stream = [IO.File]::Open($ResolvedPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+  try {
+    $stream.SetLength(0)
+    if($Bytes.Length -gt 0){ $stream.Write($Bytes, 0, $Bytes.Length) }
+    $stream.Flush($true)
+  } finally {
+    $stream.Dispose()
+  }
+}
 #
 # Edit-TextFile helpers (internal)
 #
@@ -131,12 +206,20 @@ function Edit-TextFile {
 Searches and replaces text in files while maintaining the existing text encoding (but will switch ASCII to UTF8 if replacement is unicode).
 
 .DESCRIPTION
-Performs an in-place regex (or literal) search/replace on a text file, 
-while preserving the file's actual encoding. For _really_ hard cases it
-may mistake the encoding. In such cases it may fail to find the pattern
-and/or change the encoding of the input file. 
+Performs an in-place regex (or literal) search/replace on a text file,
+while preserving the file's actual encoding. Files with multiple hardlinks
+are overwritten through their existing file record, preserving the link
+relationship and updating the content visible through every linked name.
+This hardlink-preserving write is not atomic. Files without multiple
+hardlinks continue to use a temporary-file replacement.
+
+For _really_ hard cases the function may mistake the encoding. In such
+cases it may fail to find the pattern and/or change the encoding of the
+input file.
 
 You may pass wildcards like "*.txt" to -File.
+If several matched names are hardlinks to the same file, that file is edited
+only once. Subsequent names report "Already processed hardlink".
 
 To apply one substitution use `-Patern 'a' -Replacement 'b'`. To apply 
 multiple substitutions use `-ReplaceMap` (see examples).
@@ -182,11 +265,17 @@ Edit-TextFile -file .\ansi.txt -Pattern "foo?" -Replacement="_FOO_?" -Literal
 Edit-TextFile -file .\ansi.txt -ReplaceMap ([ordered]@{"foo"="_FOO_"; "bar"="_BAR_"})
 
 .NOTES
-The operation writes modified content to temporary storage before
-replacing the target file. Original files are backed up prior to the
-modification. If a terminating error occurs during the file swap, the
-target file might remain in its prior state and intermediate temporary
-files might remain on the storage volume.
+  The operation writes modified content to temporary storage before the
+  commit. For files without multiple hardlinks, the temporary file replaces
+  the target atomically where supported. For files with multiple hardlinks,
+  the existing file record is overwritten after a backup is created; this
+  preserves all hardlinks but a crash can expose partial content. If that
+  write fails, the function attempts to restore the original bytes through
+  the same file record.
+
+  Original files are backed up prior to modification. If a terminating
+  error occurs during the commit, intermediate files might remain on the
+  storage volume.
 
 Files exceeding the configured maximum size limit or containing no
 data are skipped. Substitutions are evaluated sequentially.
@@ -264,15 +353,32 @@ data are skipped. Substitutions are evaluated sequentially.
     }
   } else {
     $resolved = (Resolve-Path -LiteralPath $File -ErrorAction Stop).ProviderPath
-    $item = Get-Item -LiteralPath $resolved -ErrorAction Stop
+    $item = Get-Item -LiteralPath $resolved -Force -ErrorAction Stop
     if($item.PSIsContainer){ throw "Path is a directory, not a file: $resolved" }
     $targets = @($item)
   }
 
+  $processedHardlinks = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
   $results = foreach($t in $targets){
     $resolved = $t.FullName
 
-    $fileSize = (Get-Item -LiteralPath $resolved).Length
+    $fileIdentity = $null
+    if($hasWildcards){
+      try {
+        if(_Etf_TestHasMultipleHardLinks -ResolvedPath $resolved){
+          $fileIdentity = _Etf_GetFileIdentity -ResolvedPath $resolved
+          if($processedHardlinks.Contains($fileIdentity)){
+            [pscustomobject]@{ File=$resolved; Changed=$false; EncodingStr=$null; EncodingObj=$null; Details='Already processed hardlink' }
+            continue
+          }
+        }
+      } catch {
+        [pscustomobject]@{ File=$resolved; Changed=$false; EncodingStr=$null; EncodingObj=$null; Details=('Hardlink detection failed: ' + $_.Exception.Message) }
+        continue
+      }
+    }
+
+    $fileSize = (Get-Item -LiteralPath $resolved -Force).Length
     if ($fileSize -eq 0) {
       [pscustomobject]@{ File=$resolved; Changed=$false; EncodingStr=$null; EncodingObj=$null; Details="Ignored empty file" }
       continue
@@ -325,6 +431,16 @@ data are skipped. Substitutions are evaluated sequentially.
       continue
     }
 
+    # ASCII cannot represent newly inserted Unicode. Preserve it by upgrading
+    # to BOM-less UTF-8, as promised by the public function's synopsis.
+    if($enc.CodePage -eq 20127 -and $newText -match '[^\x00-\x7F]'){
+      $enc = [Text.UTF8Encoding]::new($false)
+      $EncodingObj = $EncodingObj.PSObject.Copy()
+      $EncodingObj.DotNetEncodingObj = $enc
+      $EncodingObj.EncodingDescription = 'UTF-8'
+      $encWritten = _Etf_FormatEncoding -EncodingObj $EncodingObj -Enc $enc -HasBom:$hasBom
+    }
+
     $all = $null
     try { $all = _Etf_EncodeWithBom -Enc $enc -BomBytes $bomBytes -Text $newText }
     catch {
@@ -335,6 +451,7 @@ data are skipped. Substitutions are evaluated sequentially.
     $paths = _Etf_GetSwapPaths -ResolvedPath $resolved -BackupSuffixOrNull $backupSuffix
     try {
       Replace-FileBytesSafely -ResolvedPath $resolved -TmpPath $paths.Tmp -BakPath $paths.Bak -UserBackup:$paths.UserBackup -Bytes $all -ErrorAction Stop
+      if($fileIdentity){ [void]$processedHardlinks.Add($fileIdentity) }
       [pscustomobject]@{ File=$resolved; Changed=$true; EncodingStr=$encWritten; EncodingObj=$EncodingObj; Details="Changes made" }
     } catch {
       [pscustomobject]@{ File=$resolved; Changed=$false; EncodingStr=$encWritten; EncodingObj=$EncodingObj; Details=("Write/commit failed: " + $_.Exception.Message) }
@@ -1222,8 +1339,12 @@ Replaces a file's contents with specified bytes, optionally retaining a backup.
 
 .DESCRIPTION
   Behavior and guarantees:
-    - Writes the new content to -TmpPath first, then attempts to replace -ResolvedPath with it.
-    - Primary path uses [IO.File]::Replace(), which is the best option on local NTFS:
+    - Writes the new content to -TmpPath first.
+    - If -ResolvedPath has multiple hardlinks, overwrites it through its existing file record:
+        * The file ID and hardlink relationship are preserved.
+        * Every hardlinked name sees the new content.
+        * The write is NOT atomic. If it fails, the function attempts an in-place restore from -BakPath.
+    - Otherwise, the primary path uses [IO.File]::Replace(), which is the best option on local NTFS:
         * Readers see either the old or the new file, not a partially-written file.
         * A backup at -BakPath is created/overwritten as part of the replace.
     - If Replace() fails (common on non-NTFS volumes, SMB shares with varying semantics, or transient locks
@@ -1237,15 +1358,17 @@ Replaces a file's contents with specified bytes, optionally retaining a backup.
     - If -UserBackup is $false, -BakPath is a transient safety backup and may be deleted on success.
 
   Cleanup:
-    - Always attempts to delete -TmpPath in a finally block.
-    - Does not promise preservation of metadata/streams in the fallback path (ACLs, ADS, timestamps, etc.)
+    - Always attempts to delete a temporary file created by this call in a finally block.
+      A preexisting -TmpPath is rejected and left untouched.
+    - Does not promise preservation of metadata/streams in the copy/move fallback path (ACLs, ADS, timestamps, etc.)
       beyond what the underlying filesystem/provider naturally keeps.
 
 .PARAMETER ResolvedPath
   The existing target file to be replaced (must be on the same volume as -TmpPath for best behavior).
 
 .PARAMETER TmpPath
-  A temp file path in the same directory as the target (recommended) containing the new bytes to commit.
+  A new, unused temp file path in the same directory as the target (recommended).
+  Existing paths are rejected to avoid overwriting or deleting another file or hardlink.
 
 .PARAMETER BakPath
   Path for the backup copy used during the swap. May be a user-requested backup (kept) or a transient one.
@@ -1257,7 +1380,12 @@ Replaces a file's contents with specified bytes, optionally retaining a backup.
   The final bytes to be written/committed to the target file.
 
 .NOTES
-  - Intended for "in-place update" workflows: generate full new content, then commit in one swap.
+  - Hardlink detection uses the FileSystem provider's LinkType property. A detection failure stops the operation
+    before the target is modified rather than risking an unnoticed hardlink break.
+  - -StrictAtomic rejects a hardlinked target because preserving its file record requires a non-atomic write.
+  - The target, temporary file, and backup must be distinct. A backup hardlinked to the target is rejected.
+  - Windows file IDs are used to detect backup aliases and duplicate wildcard targets; failure to obtain
+    a required identity stops that edit before any target content is modified.
   - For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy
     around the Replace() stage (if not implemented inside this function).
 #>
@@ -1266,14 +1394,77 @@ Replaces a file's contents with specified bytes, optionally retaining a backup.
     [Parameter(Mandatory)][string]$TmpPath,
     [Parameter(Mandatory)][string]$BakPath,
     [Parameter(Mandatory)][bool]$UserBackup,
-    [Parameter(Mandatory)][byte[]]$Bytes,
+    [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes,
     [int]$Retries=2,
     [int]$RetryDelayMs=120,
     [switch]$StrictAtomic
   )
 
+  # Normalize through PowerShell so relative paths follow its current location,
+  # not the process working directory used by .NET file methods.
+  $ResolvedPath = $PSCmdlet.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ResolvedPath)
+  $TmpPath = $PSCmdlet.SessionState.Path.GetUnresolvedProviderPathFromPSPath($TmpPath)
+  $BakPath = $PSCmdlet.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BakPath)
+  $pathComparison = if([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT){
+    [StringComparison]::OrdinalIgnoreCase
+  } else { [StringComparison]::Ordinal }
+  if([string]::Equals($ResolvedPath,$TmpPath,$pathComparison) -or
+     [string]::Equals($ResolvedPath,$BakPath,$pathComparison) -or
+     [string]::Equals($TmpPath,$BakPath,$pathComparison)){
+    throw 'Target, temporary path, and backup path must be distinct.'
+  }
+
+  $tmpCreated = $false
   try {
-    [IO.File]::WriteAllBytes($TmpPath,$Bytes)
+    # CreateNew also rejects an existing hardlink/symlink at the temporary name.
+    # Only a file created by this call is eligible for cleanup below.
+    $stagingStream = [IO.File]::Open($TmpPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    $tmpCreated = $true
+    try {
+      if($Bytes.Length){ $stagingStream.Write($Bytes,0,$Bytes.Length) }
+      $stagingStream.Flush($true)
+    } finally { $stagingStream.Dispose() }
+
+    $hasMultipleHardLinks = _Etf_TestHasMultipleHardLinks -ResolvedPath $ResolvedPath
+    if(Test-Path -LiteralPath $BakPath){
+      $backupItem = Get-Item -LiteralPath $BakPath -Force -ErrorAction Stop
+      if($backupItem.PSIsContainer -or ($backupItem.Attributes -band [IO.FileAttributes]::ReparsePoint)){
+        throw 'Backup path must be a regular file, not a directory or reparse point.'
+      }
+      if($hasMultipleHardLinks -and
+         ((_Etf_GetFileIdentity -ResolvedPath $ResolvedPath) -eq (_Etf_GetFileIdentity -ResolvedPath $BakPath))){
+        throw 'Backup path is a hardlink to the target; refusing to break the link relationship.'
+      }
+    }
+    if($hasMultipleHardLinks){
+      if($StrictAtomic){
+        throw "Target has multiple hardlinks; preserving its file record requires a non-atomic in-place write, but StrictAtomic is set."
+      }
+
+      if(Test-Path -LiteralPath $BakPath){ Remove-Item -LiteralPath $BakPath -Force -ErrorAction Stop }
+      Copy-Item -LiteralPath $ResolvedPath -Destination $BakPath -Force -ErrorAction Stop
+
+      try {
+        _Etf_WriteBytesInPlace -ResolvedPath $ResolvedPath -Bytes $Bytes
+      } catch {
+        $writeFailure = $_
+        try {
+          $originalBytes = [IO.File]::ReadAllBytes($BakPath)
+          _Etf_WriteBytesInPlace -ResolvedPath $ResolvedPath -Bytes $originalBytes
+          if(-not $UserBackup -and (Test-Path -LiteralPath $BakPath)){
+            Remove-Item -LiteralPath $BakPath -Force -ErrorAction SilentlyContinue
+          }
+        } catch {
+          throw "Hardlink-preserving write failed: $($writeFailure.Exception.Message) Restore also failed: $($_.Exception.Message) Backup remains at '$BakPath'."
+        }
+        throw $writeFailure
+      }
+
+      if(-not $UserBackup -and (Test-Path -LiteralPath $BakPath)){
+        Remove-Item -LiteralPath $BakPath -Force -ErrorAction SilentlyContinue
+      }
+      return
+    }
 
     $replaced=$false
     for($i=0;$i -le $Retries;$i++){
@@ -1310,7 +1501,7 @@ Replaces a file's contents with specified bytes, optionally retaining a backup.
     }
 
   } finally {
-    if(Test-Path -LiteralPath $TmpPath){ Remove-Item -LiteralPath $TmpPath -Force -ErrorAction SilentlyContinue }
+    if($tmpCreated -and (Test-Path -LiteralPath $TmpPath)){ Remove-Item -LiteralPath $TmpPath -Force -ErrorAction SilentlyContinue }
   }
 }
 
