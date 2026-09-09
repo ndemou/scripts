@@ -462,6 +462,166 @@ data are skipped. Substitutions are evaluated sequentially.
   return $results | Select-Object -First 1
 }
 
+function Remove-BomFromTextFile {
+<#
+.SYNOPSIS
+Removes a leading Unicode byte-order mark without changing the remaining file bytes.
+
+.DESCRIPTION
+Recognizes UTF-8, UTF-16LE/BE, and UTF-32LE/BE BOMs. Removes exactly one
+leading BOM without decoding or re-encoding the content. Encoding, line
+endings, and any U+FEFF characters in the body are left untouched. Files
+without a recognized BOM, including empty files, are left unchanged.
+
+Accepts paths, wildcard patterns, arrays, and FileInfo objects from
+Get-ChildItem. Each file is modified at most once per invocation, even
+when multiple input names are hardlinks to the same file.
+
+Keeps a .bak backup by default, using the same commit and rollback helpers
+as Edit-TextFile. Hardlinks are preserved; their in-place write is not
+atomic. Other files use temporary-file replacement where supported.
+
+.PARAMETER File
+One or more paths or FileInfo objects. Existing literal paths take
+precedence over wildcard interpretation, including names with brackets.
+
+.PARAMETER Backup
+Backup extension, with or without a leading dot. Defaults to 'bak'.
+Use an empty string to keep no backup after a successful change.
+
+.PARAMETER MaxFileSize
+Files larger than this byte count are skipped. Defaults to 1001001,
+matching Edit-TextFile. The complete file is held in memory during editing.
+
+.OUTPUTS
+One object per evaluated file: File, Changed, EncodingStr, BytesRemoved,
+and Details. EncodingStr is based on the recognized BOM; it is null for
+files without one. Read or commit failures report Changed=False in Details.
+
+.EXAMPLE
+Remove-BomFromTextFile -File .\settings.json
+
+.EXAMPLE
+Remove-BomFromTextFile -File '*.ps1' -Backup '' -WhatIf
+
+.EXAMPLE
+Get-ChildItem .\logs -File -Recurse | Remove-BomFromTextFile
+
+.NOTES
+Removing a BOM does not convert UTF-16 or UTF-32 to UTF-8. Readers may
+need an explicit encoding after the BOM is removed. Content is not
+validated; only the recognized leading signature is removed.
+#>
+  [CmdletBinding(SupportsShouldProcess=$true)]
+  param(
+    [Parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true)]
+    [Alias('Path')]
+    [object[]]$File,
+
+    [string]$Backup='bak',
+
+    [ValidateRange(0, 2147483647)]
+    [long]$MaxFileSize=1001001
+  )
+
+  begin {
+    $backupSuffix = _Etf_NormalizeBackupSuffix -Backup $Backup
+    $pathComparer = if([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT){
+      [StringComparer]::OrdinalIgnoreCase
+    } else { [StringComparer]::Ordinal }
+    $processedPaths = [Collections.Generic.HashSet[string]]::new($pathComparer)
+    $processedHardlinks = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  }
+
+  process {
+    foreach($entry in $File){
+      $currentPath = if($entry -is [IO.FileSystemInfo]){ $entry.FullName } else { [string]$entry }
+      $hasWildcards = [Management.Automation.WildcardPattern]::ContainsWildcardCharacters($currentPath)
+      if(Test-Path -LiteralPath $currentPath){
+        $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop
+        $targets = @(Resolve-FileFromPath -Path $item -ErrorAction Stop)
+      } elseif($hasWildcards){
+        $targets = @(Get-ChildItem -Path $currentPath -File -ErrorAction Stop)
+      } else {
+        $targets = @(Resolve-FileFromPath -Path $currentPath -ErrorAction Stop)
+      }
+
+      if($targets.Count -eq 0){
+        [pscustomobject]@{ File=$currentPath; Changed=$false; EncodingStr=$null; BytesRemoved=0; Details='No files matched pattern' }
+        continue
+      }
+
+      foreach($target in $targets){
+        $resolved = $target.FullName
+        $result = [pscustomobject]@{ File=$resolved; Changed=$false; EncodingStr=$null; BytesRemoved=0; Details='' }
+        try {
+          if($processedPaths.Contains($resolved)){
+            $result.Details = 'Already processed file'
+            $result
+            continue
+          }
+          $target.Refresh()
+          if($target.Length -gt $MaxFileSize){
+            $result.Details = 'Skipped too big file (use -MaxFileSize to change limit)'
+            $result
+            continue
+          }
+
+          [byte[]]$bytes = [IO.File]::ReadAllBytes($resolved)
+          # Recheck in case the file grew after its directory entry was read.
+          if($bytes.Length -gt $MaxFileSize){
+            $result.Details = 'Skipped too big file (use -MaxFileSize to change limit)'
+            $result
+            continue
+          }
+          if($bytes.Length -eq 0){
+            $result.Details = 'No BOM found'
+            $result
+            continue
+          }
+          $bom = _Get-FileBomFromPrefix -Buffer $bytes
+          if(-not $bom.Exists){
+            $result.Details = 'No BOM found'
+            $result
+            continue
+          }
+
+          $result.EncodingStr = "$($bom.Enc) (With BOM)"
+          $identity = $null
+          if(_Etf_TestHasMultipleHardLinks -ResolvedPath $resolved){
+            $identity = _Etf_GetFileIdentity -ResolvedPath $resolved
+          }
+          if($identity -and $processedHardlinks.Contains($identity)){
+            $result.Details = 'Already processed hardlink'
+            $result
+            continue
+          }
+          if(-not $PSCmdlet.ShouldProcess($resolved, "Remove $($bom.Enc) BOM")){
+            $result.Details = 'Skipped by ShouldProcess'
+            $result
+            continue
+          }
+
+          $body = New-Object byte[] ($bytes.Length - $bom.Bytes.Count)
+          if($body.Length){ [Array]::Copy($bytes, $bom.Bytes.Count, $body, 0, $body.Length) }
+          $paths = _Etf_GetSwapPaths -ResolvedPath $resolved -BackupSuffixOrNull $backupSuffix
+          Replace-FileBytesSafely -ResolvedPath $resolved -TmpPath $paths.Tmp -BakPath $paths.Bak `
+            -Bytes $body -UserBackup $paths.UserBackup -ErrorAction Stop
+          [void]$processedPaths.Add($resolved)
+          if($identity){ [void]$processedHardlinks.Add($identity) }
+          $result.Changed = $true
+          $result.EncodingStr = "$($bom.Enc) (No BOM)"
+          $result.BytesRemoved = $bom.Bytes.Count
+          $result.Details = 'BOM removed'
+        } catch {
+          $result.Details = 'BOM removal failed: ' + $_.Exception.Message
+        }
+        $result
+      }
+    }
+  }
+}
+
 function _Get-GreekLetterStats {
 <# 
 .SYNOPSIS

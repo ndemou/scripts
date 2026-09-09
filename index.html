@@ -504,6 +504,24 @@
             </details>
           </div>
           <div class="function-entry">
+            <p class="function-name"><strong>Remove-BomFromTextFile</strong></p>
+            <p class="function-synopsis">Removes a leading Unicode byte-order mark without changing the remaining file bytes.</p>
+            <details class="script-details function-details">
+              <summary>Read more</summary>
+              <p class="script-details-text">Recognizes UTF-8, UTF-16LE/BE, and UTF-32LE/BE BOMs. Removes exactly one<br>leading BOM without decoding or re-encoding the content. Encoding, line<br>endings, and any U+FEFF characters in the body are left untouched. Files<br>without a recognized BOM, including empty files, are left unchanged.</p>
+              <p class="script-details-text">Accepts paths, wildcard patterns, arrays, and FileInfo objects from<br>Get-ChildItem. Each file is modified at most once per invocation, even<br>when multiple input names are hardlinks to the same file.</p>
+              <p class="script-details-text">Keeps a .bak backup by default, using the same commit and rollback helpers<br>as Edit-TextFile. Hardlinks are preserved; their in-place write is not<br>atomic. Other files use temporary-file replacement where supported.</p>
+              <p class="script-details-text">.PARAMETER File<br>One or more paths or FileInfo objects. Existing literal paths take<br>precedence over wildcard interpretation, including names with brackets.</p>
+              <p class="script-details-text">.PARAMETER Backup<br>Backup extension, with or without a leading dot. Defaults to &#x27;bak&#x27;.<br>Use an empty string to keep no backup after a successful change.</p>
+              <p class="script-details-text">.PARAMETER MaxFileSize<br>Files larger than this byte count are skipped. Defaults to 1001001,<br>matching Edit-TextFile. The complete file is held in memory during editing.</p>
+              <p class="script-details-text"><span class="detail-directive">.OUTPUTS</span><br>One object per evaluated file: File, Changed, EncodingStr, BytesRemoved,<br>and Details. EncodingStr is based on the recognized BOM; it is null for<br>files without one. Read or commit failures report Changed=False in Details.</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Remove-BomFromTextFile -File .\settings.json</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Remove-BomFromTextFile -File &#x27;*.ps1&#x27; -Backup &#x27;&#x27; -WhatIf</p>
+              <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Get-ChildItem .\logs -File -Recurse | Remove-BomFromTextFile</p>
+              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>Removing a BOM does not convert UTF-16 or UTF-32 to UTF-8. Readers may<br>need an explicit encoding after the BOM is removed. Content is not<br>validated; only the recognized leading signature is removed.</p>
+            </details>
+          </div>
+          <div class="function-entry">
             <p class="function-name"><strong>Get-NewlineStyle</strong></p>
             <p class="function-synopsis">Detect newline style in a decoded string. Returns &#x27;CRLF&#x27;,&#x27;LF&#x27;,&#x27;CR&#x27;,&#x27;Mixed&#x27;,&#x27;None&#x27;,&#x27;NotChecked&#x27;.</p>
           </div>
