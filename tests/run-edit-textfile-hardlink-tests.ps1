@@ -531,6 +531,153 @@ $tests.Add(@{ Name = 'restoration error reports both failures and the retained b
   Assert-Links $fixture $fixture.Original
 } })
 
+$tests.Add(@{ Name = 'native metadata distinguishes a regular file from its hardlinks'; Body = {
+  $fixture = New-Fixture -LinkCount 3
+  foreach ($link in $fixture.Links) {
+    $metadata = _Etf_GetWindowsFileMetadata -ResolvedPath $link
+    Assert-Equal $metadata.NumberOfLinks 3 'Native query returned the wrong hardlink count.'
+    Assert-Equal $metadata.ReparseTag 0 'An ordinary hardlink was reported as a reparse point.'
+  }
+  Remove-Item -LiteralPath $fixture.Links[2]
+  Assert-Equal (_Etf_GetWindowsFileMetadata -ResolvedPath $fixture.File).NumberOfLinks 2 'Native hardlink count did not refresh.'
+  Assert-Throws { _Etf_GetWindowsFileMetadata -ResolvedPath (Join-Path $fixture.Directory 'missing.txt') } '*'
+} })
+
+# Cloud tags cannot be assigned to arbitrary NTFS files without a sync engine.
+# Inject only provider metadata; the commit, backups, and hardlinks remain real.
+$tests.Add(@{ Name = 'all sixteen Cloud Files tag variants are valid backup files'; Body = {
+  $fixture = New-Fixture
+  [IO.File]::WriteAllText($fixture.Bak, 'old backup')
+  $simulatedTag = @{ Value = [uint32]0 }
+  function Get-Item {
+    param($LiteralPath, [switch]$Force)
+    [pscustomobject]@{ PSIsContainer = $false; Attributes = [IO.FileAttributes]::ReparsePoint }
+  }
+  function _Etf_GetWindowsFileMetadata {
+    [pscustomobject]@{ ReparseTag = $simulatedTag.Value; NumberOfLinks = 1 }
+  }
+  for ($variant = 0; $variant -lt 16; $variant++) {
+    $simulatedTag.Value = [Convert]::ToUInt32(('9000{0:X}01A' -f $variant), 16)
+    _Etf_AssertBackupFile -ResolvedPath $fixture.Bak
+  }
+  Assert-Equal ([IO.File]::ReadAllText($fixture.Bak)) 'old backup' 'Validating a cloud backup modified it.'
+} })
+
+foreach ($tagHex in @('A000000C', 'A0000003', 'A000001D', '80000017', '9001001A', '00000000')) {
+  $tests.Add(@{ Name = "unsupported backup reparse tag $tagHex is rejected before writing"; Data = $tagHex; Body = {
+    param($tagHex)
+    $fixture = New-Fixture
+    [IO.File]::WriteAllText($fixture.Bak, 'old backup')
+    $tag = [Convert]::ToUInt32($tagHex, 16)
+    function Get-Item {
+      param($LiteralPath, [switch]$Force)
+      if ($LiteralPath -eq $fixture.Bak) {
+        [pscustomobject]@{ PSIsContainer = $false; Attributes = [IO.FileAttributes]::ReparsePoint }
+      } else { Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force }
+    }
+    function _Etf_GetWindowsFileMetadata { [pscustomobject]@{ ReparseTag = $tag; NumberOfLinks = 1 } }
+    Assert-Throws { Invoke-Commit $fixture } '*unsupported reparse tag*'
+    Assert-Links $fixture $fixture.Original
+    Assert-Equal ([IO.File]::ReadAllText($fixture.Bak)) 'old backup' 'Rejected backup changed.'
+    Assert-NoStagingFiles $fixture
+  } })
+}
+
+$tests.Add(@{ Name = 'unreadable backup reparse metadata stops before the target is modified'; Body = {
+  $fixture = New-Fixture
+  [IO.File]::WriteAllText($fixture.Bak, 'old backup')
+  function Get-Item {
+    param($LiteralPath, [switch]$Force)
+    if ($LiteralPath -eq $fixture.Bak) {
+      [pscustomobject]@{ PSIsContainer = $false; Attributes = [IO.FileAttributes]::ReparsePoint }
+    } else { Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force }
+  }
+  function _Etf_GetWindowsFileMetadata { throw 'Injected reparse metadata failure' }
+  Assert-Throws { Invoke-Commit $fixture } '*Injected reparse metadata failure*'
+  Assert-Links $fixture $fixture.Original
+  Assert-Equal ([IO.File]::ReadAllText($fixture.Bak)) 'old backup' 'Metadata failure changed the backup.'
+  Assert-NoStagingFiles $fixture
+} })
+
+foreach ($linkCount in @(1, 3)) {
+  $tests.Add(@{ Name = "cloud target with blank LinkType and $linkCount names keeps the correct write behavior"; Data = $linkCount; Body = {
+    param($linkCount)
+    $fixture = New-Fixture -Text ('lines: ' + [char]0x2501 + [char]0x2500) -LinkCount $linkCount
+    [IO.File]::WriteAllText($fixture.Bak, 'old backup')
+    # Resolve the real FileInfo/encoding before substituting provider metadata.
+    $encodingContext = _Etf_GetEncodingContext -ResolvedPath $fixture.File
+    $getMetadata = ${function:_Etf_GetWindowsFileMetadata}
+    function Get-Item {
+      param($LiteralPath, [switch]$Force)
+      $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force
+      if ($LiteralPath -in @($fixture.File, $fixture.Bak)) {
+        # Match PowerShell's view of the reported OneDrive target and backup.
+        [pscustomobject]@{
+          FullName = $item.FullName; Length = $item.Length; PSIsContainer = $false
+          Attributes = [IO.FileAttributes]::Archive -bor [IO.FileAttributes]::ReparsePoint
+          LinkType = ''
+        }
+      } else { $item }
+    }
+    function _Etf_GetWindowsFileMetadata {
+      param($ResolvedPath)
+      $actual = & $getMetadata -ResolvedPath $ResolvedPath
+      [pscustomobject]@{ ReparseTag = [Convert]::ToUInt32('9000601A', 16); NumberOfLinks = $actual.NumberOfLinks }
+    }
+    function _Etf_GetEncodingContext { $encodingContext }
+    if ($linkCount -gt 1) {
+      Assert-Throws { Invoke-Commit $fixture -StrictAtomic } '*StrictAtomic*'
+      Assert-Links $fixture $fixture.Original
+      Assert-Equal ([IO.File]::ReadAllText($fixture.Bak)) 'old backup' 'StrictAtomic rejection changed the backup.'
+      Assert-NoStagingFiles $fixture
+    }
+    $result = Edit-TextFile $fixture.File -Pattern '[\u2501\u2500]' -Replacement '-'
+    Assert-True $result.Changed $result.Details
+    Assert-Bytes $fixture.File ([Text.Encoding]::UTF8.GetBytes('lines: --'))
+    if ($linkCount -gt 1) { Assert-Links $fixture ([Text.Encoding]::UTF8.GetBytes('lines: --')) }
+    else { Assert-True ((Get-FileId $fixture.File) -cne $fixture.Id) 'Single-name cloud file did not use replacement.' }
+    Assert-Bytes $fixture.Bak $fixture.Original
+    Assert-NoStagingFiles $fixture
+  } })
+}
+
+$tests.Add(@{ Name = 'cloud metadata does not hide a backup hardlinked to the target'; Body = {
+  $fixture = New-Fixture
+  New-Item -ItemType HardLink -Path $fixture.Bak -Target $fixture.File | Out-Null
+  $fixture.Links += $fixture.Bak
+  function Get-Item {
+    param($LiteralPath, [switch]$Force)
+    [pscustomobject]@{ PSIsContainer = $false; Attributes = [IO.FileAttributes]::ReparsePoint; LinkType = '' }
+  }
+  function _Etf_GetWindowsFileMetadata {
+    [pscustomobject]@{ ReparseTag = [Convert]::ToUInt32('9000601A', 16); NumberOfLinks = 3 }
+  }
+  Assert-Throws { Invoke-Commit $fixture } '*Backup path is a hardlink to the target*'
+  Assert-Links $fixture $fixture.Original
+  Assert-NoStagingFiles $fixture
+} })
+
+$tests.Add(@{ Name = 'a real junction at the backup name is rejected without following it'; Body = {
+  $fixture = New-Fixture
+  $destination = Join-Path $fixture.Directory 'junction-destination'
+  New-Item -ItemType Directory -Path $destination | Out-Null
+  $sentinel = Join-Path $destination 'keep.txt'
+  [IO.File]::WriteAllText($sentinel, 'untouched')
+  New-Item -ItemType Junction -Path $fixture.Bak -Target $destination | Out-Null
+  try {
+    Assert-Equal (_Etf_GetWindowsFileMetadata -ResolvedPath $fixture.Bak).ReparseTag `
+      ([Convert]::ToUInt32('A0000003', 16)) 'Native query followed the junction instead of reading its tag.'
+    Assert-Throws { Invoke-Commit $fixture } '*directory*'
+    Assert-Links $fixture $fixture.Original
+    Assert-Equal ([IO.File]::ReadAllText($sentinel)) 'untouched' 'Junction destination was modified.'
+    Assert-True (Test-Path -LiteralPath $fixture.Bak) 'Backup junction was removed.'
+    Assert-NoStagingFiles $fixture
+  } finally {
+    # Remove just this fixture junction, never recursively traverse its target.
+    [IO.Directory]::Delete($fixture.Bak)
+  }
+} })
+
 $passed = 0
 $failures = [Collections.Generic.List[string]]::new()
 try {

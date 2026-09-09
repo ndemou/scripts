@@ -122,7 +122,91 @@ function _Etf_GetSwapPaths {
   [pscustomobject]@{ Tmp=$tmp; Bak=$bak; UserBackup=$userBackup }
 }
 
-<# Returns $true when the FileSystem provider reports that the target currently has multiple hardlink names. #>
+<# Queries file metadata without following reparse points or reading cloud-file contents. #>
+function _Etf_GetWindowsFileMetadata {
+  [CmdletBinding()] param([Parameter(Mandatory)][string]$ResolvedPath)
+
+  if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){
+    throw 'Edit-TextFile: Reparse-point metadata checks require Windows.'
+  }
+  if(-not ('EtfNative.FileMetadata' -as [type])){
+    Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace EtfNative {
+    public static class FileMetadata {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct AttributeTagInfo {
+            public uint Attributes;
+            public uint ReparseTag;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct StandardInfo {
+            public long AllocationSize;
+            public long EndOfFile;
+            public uint NumberOfLinks;
+            public byte DeletePending;
+            public byte Directory;
+        }
+        public sealed class Result {
+            public uint ReparseTag;
+            public uint NumberOfLinks;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access,
+            uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle,
+            int informationClass, out AttributeTagInfo information, uint bufferSize);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle,
+            int informationClass, out StandardInfo information, uint bufferSize);
+        public static Result Get(string path) {
+            // OPEN_EXISTING, metadata-only access, share read/write/delete;
+            // OPEN_REPARSE_POINT | BACKUP_SEMANTICS also handles dangling links.
+            using (SafeFileHandle handle = CreateFileW(path, 0, 7, IntPtr.Zero,
+                3, 0x02200000, IntPtr.Zero)) {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                AttributeTagInfo tag;
+                if (!GetFileInformationByHandleEx(handle, 9, out tag,
+                    (uint)Marshal.SizeOf(typeof(AttributeTagInfo))))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                StandardInfo standard;
+                if (!GetFileInformationByHandleEx(handle, 1, out standard,
+                    (uint)Marshal.SizeOf(typeof(StandardInfo))))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                return new Result { ReparseTag = tag.ReparseTag, NumberOfLinks = standard.NumberOfLinks };
+            }
+        }
+    }
+}
+'@
+  }
+  [EtfNative.FileMetadata]::Get($ResolvedPath)
+}
+
+<# Allows ordinary files and Windows Cloud Files placeholders as backups; rejects redirection and unknown tags. #>
+function _Etf_AssertBackupFile {
+  [CmdletBinding()] param([Parameter(Mandatory)][string]$ResolvedPath)
+
+  $item = Get-Item -LiteralPath $ResolvedPath -Force -ErrorAction Stop
+  if($item.PSIsContainer){ throw "Backup path must not be a directory: $ResolvedPath" }
+  if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){
+    $metadata = _Etf_GetWindowsFileMetadata -ResolvedPath $ResolvedPath
+    # IO_REPARSE_TAG_CLOUD through CLOUD_F differ only in bits 12-15.
+    # Cloud placeholders carry file data, not symbolic-link redirection.
+    # https://learn.microsoft.com/openspecs/windows_protocols/ms-fscc/c8e77b37-3909-4fe6-a4ea-2b9d423b1ee4
+    if(($metadata.ReparseTag -band [uint32]4294905855) -ne [uint32]2415919130){
+      throw ('Backup path has unsupported reparse tag 0x{0:X8}; symbolic links and other reparse points are not allowed: {1}' -f $metadata.ReparseTag,$ResolvedPath)
+    }
+  }
+}
+
+<# Returns $true for multiple hardlink names, including cloud files whose provider LinkType is blank. #>
 function _Etf_TestHasMultipleHardLinks {
   [CmdletBinding()] param([Parameter(Mandatory)][string]$ResolvedPath)
 
@@ -130,6 +214,14 @@ function _Etf_TestHasMultipleHardLinks {
   $linkTypeProperty = $item.PSObject.Properties['LinkType']
   if($null -eq $linkTypeProperty){
     throw "Edit-TextFile: Cannot determine whether the file has multiple hardlinks because the FileSystem provider does not expose LinkType: $ResolvedPath"
+  }
+
+  if([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and
+     ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){
+    # Cloud metadata can hide HardLink in the provider's LinkType property.
+    # Ask Windows for the link count of this file record instead.
+    $metadata = _Etf_GetWindowsFileMetadata -ResolvedPath $ResolvedPath
+    return ($metadata.NumberOfLinks -gt 1)
   }
 
   [string]::Equals([string]$linkTypeProperty.Value, 'HardLink', [StringComparison]::OrdinalIgnoreCase)
@@ -1573,10 +1665,12 @@ Replaces a file's contents with specified bytes, optionally retaining a backup.
   The final bytes to be written/committed to the target file.
 
 .NOTES
-  - Hardlink detection uses the FileSystem provider's LinkType property. A detection failure stops the operation
-    before the target is modified rather than risking an unnoticed hardlink break.
+  - Hardlink detection uses the FileSystem provider's LinkType property and queries the Windows link count
+    for reparse points, including cloud files. A detection failure stops the operation before the target is modified.
   - -StrictAtomic rejects a hardlinked target because preserving its file record requires a non-atomic write.
   - The target, temporary file, and backup must be distinct. A backup hardlinked to the target is rejected.
+  - Backups may be Cloud Files placeholders (including OneDrive files). Directories, symbolic links, and
+    other reparse-point types are rejected. A failure to identify a reparse tag also stops the operation.
   - Windows file IDs are used to detect backup aliases and duplicate wildcard targets; failure to obtain
     a required identity stops that edit before any target content is modified.
   - For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy
@@ -1620,10 +1714,7 @@ Replaces a file's contents with specified bytes, optionally retaining a backup.
 
     $hasMultipleHardLinks = _Etf_TestHasMultipleHardLinks -ResolvedPath $ResolvedPath
     if(Test-Path -LiteralPath $BakPath){
-      $backupItem = Get-Item -LiteralPath $BakPath -Force -ErrorAction Stop
-      if($backupItem.PSIsContainer -or ($backupItem.Attributes -band [IO.FileAttributes]::ReparsePoint)){
-        throw 'Backup path must be a regular file, not a directory or reparse point.'
-      }
+      _Etf_AssertBackupFile -ResolvedPath $BakPath
       if($hasMultipleHardLinks -and
          ((_Etf_GetFileIdentity -ResolvedPath $ResolvedPath) -eq (_Etf_GetFileIdentity -ResolvedPath $BakPath))){
         throw 'Backup path is a hardlink to the target; refusing to break the link relationship.'

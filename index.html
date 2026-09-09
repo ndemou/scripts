@@ -565,7 +565,7 @@
               <p class="script-details-text">.PARAMETER BakPath<br>Path for the backup copy used during the swap. May be a user-requested backup (kept) or a transient one.</p>
               <p class="script-details-text">.PARAMETER UserBackup<br>Indicates whether -BakPath is user-requested (keep it) or internal/transient (delete on success).</p>
               <p class="script-details-text">.PARAMETER Bytes<br>The final bytes to be written/committed to the target file.</p>
-              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>- Hardlink detection uses the FileSystem provider&#x27;s LinkType property. A detection failure stops the operation<br>before the target is modified rather than risking an unnoticed hardlink break.<br>- -StrictAtomic rejects a hardlinked target because preserving its file record requires a non-atomic write.<br>- The target, temporary file, and backup must be distinct. A backup hardlinked to the target is rejected.<br>- Windows file IDs are used to detect backup aliases and duplicate wildcard targets; failure to obtain<br>a required identity stops that edit before any target content is modified.<br>- For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy<br>around the Replace() stage (if not implemented inside this function).</p>
+              <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>- Hardlink detection uses the FileSystem provider&#x27;s LinkType property and queries the Windows link count<br>for reparse points, including cloud files. A detection failure stops the operation before the target is modified.<br>- -StrictAtomic rejects a hardlinked target because preserving its file record requires a non-atomic write.<br>- The target, temporary file, and backup must be distinct. A backup hardlinked to the target is rejected.<br>- Backups may be Cloud Files placeholders (including OneDrive files). Directories, symbolic links, and<br>other reparse-point types are rejected. A failure to identify a reparse tag also stops the operation.<br>- Windows file IDs are used to detect backup aliases and duplicate wildcard targets; failure to obtain<br>a required identity stops that edit before any target content is modified.<br>- For OneDrive/SMB scenarios, transient failures are normal; callers may want a small retry policy<br>around the Replace() stage (if not implemented inside this function).</p>
             </details>
           </div>
           <div class="function-entry">
@@ -824,7 +824,7 @@
       Source repository:
       <a href="https://github.com/ndemou/scripts">github.com/ndemou/scripts</a>
     </p>
-    <p class="footer">Last updated at 2026-09-08 13:14 UTC</p>
+    <p class="footer">Last updated at 2026-09-09 06:47 UTC</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {
