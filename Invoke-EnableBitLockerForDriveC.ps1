@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
 Enables or maintains BitLocker protection for C: and submits each
@@ -91,7 +91,7 @@ function Write-Step {
     )
     Write-Host ''
     Write-Host ('  ' + $Message) -ForegroundColor White
-    Write-Host ('  ' + ('─' * $UiRuleWidth)) -ForegroundColor DarkGray
+    Write-Host ('  ' + ('-' * $UiRuleWidth)) -ForegroundColor DarkGray
 }
 function Write-Status {
     param(
@@ -138,10 +138,10 @@ function Write-SuccessHeader {
         [string]$Message
     )
     Write-Host ''
-    Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Green
+    Write-Host ('  ' + ('-' * $UiRuleWidth)) -ForegroundColor Green
     Write-Host '  SUCCESS' -ForegroundColor Green -NoNewline
     Write-Host ('  ' + $Message) -ForegroundColor White
-    Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Green
+    Write-Host ('  ' + ('-' * $UiRuleWidth)) -ForegroundColor Green
 }
 function Write-Problem {
     param(
@@ -150,7 +150,7 @@ function Write-Problem {
         [string]$NextStep = ''
     )
     Write-Host ''
-    Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Red
+    Write-Host ('  ' + ('-' * $UiRuleWidth)) -ForegroundColor Red
     Write-Host '  CANNOT CONTINUE' -ForegroundColor Red
     Write-Host ('  ' + $Message) -ForegroundColor Red
     if (-not [string]::IsNullOrWhiteSpace($NextStep)) {
@@ -158,7 +158,7 @@ function Write-Problem {
         Write-Host '  What to do next:' -ForegroundColor Yellow
         Write-Host ('  ' + $NextStep) -ForegroundColor Yellow
     }
-    Write-Host ('  ' + ('━' * $UiRuleWidth)) -ForegroundColor Red
+    Write-Host ('  ' + ('-' * $UiRuleWidth)) -ForegroundColor Red
     Write-Host ''
 }
 function Get-ErrorDescription {

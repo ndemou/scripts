@@ -1,4 +1,4 @@
-﻿<#
+<#
 A collection of helper functions for handling files
 #>
 

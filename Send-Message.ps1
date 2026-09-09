@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
 Sends an email alert using SMTP settings stored in a JSON config file.
 
