@@ -613,7 +613,23 @@
           <a class="script-link" href="Invoke-EnableBitLockerForDriveC.ps1">Invoke-EnableBitLockerForDriveC.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;Invoke-EnableBitLockerForDriveC.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for Invoke-EnableBitLockerForDriveC.ps1" aria-label="Copy download command for Invoke-EnableBitLockerForDriveC.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
-          <p class="script-synopsis">Requires -Version 5.1</p>
+          <p class="script-synopsis">Enables or maintains BitLocker protection for C: and submits each<br>recovery-password protector to AD DS and Microsoft Entra ID.</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <p class="script-details-text">This standalone public script can run independently of the laptop preparation<br>workflow. It does not load the private configuration or caller scripts used by<br>that workflow.</p>
+          <p class="script-details-text">Use this script on a Windows computer when the operating-system<br>volume must be BitLocker protected and its recovery password must be<br>stored in at least one of the computer&#x27;s configured directories.</p>
+          <p class="script-details-text">The script requires an elevated Windows PowerShell 5.1 session. A<br>Domain Admin account is neither required nor recommended. The script<br>targets C: only. It attempts recovery-key submission to each eligible<br>directory (AD DS, Microsoft Entra ID, or both) and treats the operation<br>as successful only when at least one submission succeeds and the local<br>BitLocker state passes its final checks.</p>
+          <p class="script-details-text">The script may create a recovery-password protector, add a TPM<br>protector when no supported boot protector exists, start or resume<br>encryption, and resume suspended BitLocker protection. Existing<br>recovery and boot protectors are retained.</p>
+          <p class="script-details-text">By default, a BitLocker hardware test is requested. Encryption may<br>therefore remain pending until Windows is restarted and the test<br>succeeds. UsedSpaceOnly and SkipHardwareTest change this behavior as<br>described below.</p>
+          <p class="script-details-text">A terminating error can leave externally visible state partially<br>updated. For example, a recovery protector or directory recovery<br>record may exist even if encryption is not started or later validation<br>fails. The script does not remove protectors or recovery records that<br>it created or submitted.</p>
+          <p class="script-details-text">A successful directory submission means Windows accepted the backup<br>request. After a successful AD DS submission, the script makes a<br>best-effort read-only check for a child msFVE-RecoveryInformation object<br>whose recovery GUID matches the local protector. Read access is not<br>required: an unavailable or inconclusive check is reported but does not<br>turn a successful backup into a failure. The recovery password itself is<br>never read back from AD DS or Microsoft Entra ID.</p>
+          <p class="script-details-text">When it creates a recovery-password protector or enables BitLocker, the<br>script suppresses the warning stream from the relevant BitLocker cmdlet<br>so the 48-digit password is not written to the console or a transcript.<br>Errors remain enabled. The script never intentionally prints, reads back,<br>or returns the recovery password.</p>
+          <p class="script-details-text">Do not use this script while C: is being decrypted, or where another<br>full-disk encryption product is active. Review applicable Group Policy<br>and Intune BitLocker settings before use because policy can reject or<br>alter the requested configuration.</p>
+          <p class="script-details-text">Expected conditions that prevent the interactive workflow from<br>continuing are shown as a clear red message and the script exits without<br>raising an exception. Unexpected implementation, Windows, or cmdlet<br>failures remain terminating errors. No success object is produced.</p>
+          <p class="script-details-text">.PARAMETER EncryptionMethod<br>Specifies the requested BitLocker encryption method. Applied policy may<br>require a different supported method, which the script reports and<br>uses.</p>
+          <p class="script-details-text">.PARAMETER UsedSpaceOnly<br>When set, requests encryption of allocated disk space only; otherwise,<br>requests encryption of the entire volume. Use this mainly for new or<br>recently prepared systems where unallocated space has not held<br>sensitive data.</p>
+          <p class="script-details-text">.PARAMETER SkipHardwareTest<br>When set, requests encryption without the BitLocker startup hardware<br>test; otherwise, a restart may be required before encryption begins.<br>Use only when bypassing the preboot validation is acceptable.</p>
+        </details>
       </li>
       <li class="script-item">
         <div class="script-header">
@@ -853,7 +869,7 @@
       Source repository:
       <a href="https://github.com/ndemou/scripts">github.com/ndemou/scripts</a>
     </p>
-    <p class="footer">Last updated at 2026-10-13 13:11 UTC</p>
+    <p class="footer">Last updated at 2026-10-13 17:26 UTC</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {

@@ -1,11 +1,14 @@
-#Requires -Version 5.1
 <#
 .SYNOPSIS
 Enables or maintains BitLocker protection for C: and submits each
 recovery-password protector to AD DS and Microsoft Entra ID.
 
 .DESCRIPTION
-Use this script on a Windows 11 computer when the operating-system
+This standalone public script can run independently of the laptop preparation
+workflow. It does not load the private configuration or caller scripts used by
+that workflow.
+
+Use this script on a Windows computer when the operating-system
 volume must be BitLocker protected and its recovery password must be
 stored in at least one of the computer's configured directories.
 
@@ -72,6 +75,8 @@ When set, requests encryption without the BitLocker startup hardware
 test; otherwise, a restart may be required before encryption begins.
 Use only when bypassing the preboot validation is acceptable.
 #>
+
+#Requires -Version 5.1
 
 [CmdletBinding()]
 param(
