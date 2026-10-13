@@ -2,26 +2,26 @@
 Public functions
 #>
 
-function Write-Host-RED($msg) { Write-Host -ForegroundColor Red $msg }
+function Write-RedMessage($msg) { Write-Host -ForegroundColor Red $msg }
 
-function Write-Host-YELLOW($msg) { Write-Host -ForegroundColor Yellow $msg }
+function Write-YellowMessage($msg) { Write-Host -ForegroundColor Yellow $msg }
 
-function Right($text, $length) {
+function Get-StringSuffix($text, $length) {
     $startchar = [math]::min($text.length - $Length,$text.length)
     $startchar = [math]::max(0, $startchar)
     $text.SubString($startchar, [math]::min($text.length, $Length))
 }
 
-function text_after($text, $start) {
+function Get-StringFromIndex($text, $start) {
     if ($start -ge $text.length) { "" } else { $text.SubString($start, $text.length - $start) }
 }
 
-function CountWordOccurances($word, $file) {
+function Measure-WordMatchingLine($word, $file) {
     (Get-Content $file | Select-String "\b$word\b" | Measure-Object -line).lines
 }
 
-function SudoRmdir($dirpath) {
-    if (-not $dirpath) { throw "Error. SudoRmdir requires a path" }
+function Remove-DirectoryTree($dirpath) {
+    if (-not $dirpath) { throw "Error. Remove-DirectoryTree requires a path" }
     $temp_empty_dir = "$Env:TEMP\$(Get-Random).tmp"
     mkdir $temp_empty_dir > $null
     robocopy /MIR $temp_empty_dir $dirpath /NFL /NDL /NJH /NJS /nc /ns /np > $null 2> $null
@@ -31,12 +31,12 @@ function SudoRmdir($dirpath) {
     Remove-Item -recurse -force $temp_empty_dir > $null
 }
 
-function RunningWithElevatedRights(){
+function Test-AdministratorAccess(){
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Get-WinVer() {
+function Get-WindowsVersion() {
     $RegistryCurrentVersion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     if ([int]($RegistryCurrentVersion.CurrentBuildNumber) -ge 22000) { $major_ver = 'Win11' } else { $major_ver = 'Win10' }
     $minor_ver = $RegistryCurrentVersion.DisplayVersion
@@ -44,9 +44,9 @@ function Get-WinVer() {
     "$major_ver/$minor_ver"
 }
 
-function GetBiosSN() { (Get-CimInstance win32_bios).serialnumber }
+function Get-BiosSerialNumber() { (Get-CimInstance win32_bios).serialnumber }
 
-function GetNameOfLoggedInUser() {
+function Get-LoggedInUserName() {
     $output = query user
     $line_with_user = ($output | Select-String '^>')
     if (-not $line_with_user) { $line_with_user = ($output | Select-String 'console') }
@@ -54,7 +54,7 @@ function GetNameOfLoggedInUser() {
     ($line_with_user -replace '^ *>*','' -replace ' .*','')
 }
 
-function GetAnyDeskId() {
+function Get-AnyDeskId() {
 
     # Case 1: "C:\ProgramData\AnyDesk\system.conf"
     $path = "C:\ProgramData\AnyDesk\system.conf"
@@ -64,7 +64,7 @@ function GetAnyDeskId() {
     }
 
     # Case 3: "C:\Users\$user\AppData\Roaming\AnyDesk\system.conf"
-    $user = GetNameOfLoggedInUser
+    $user = Get-LoggedInUserName
     if ($user) {
         $path = "C:\Users\$user\AppData\Roaming\AnyDesk\system.conf"
         if (Test-Path $path) {
@@ -101,34 +101,32 @@ function GetAnyDeskId() {
     }
 }
 
-function Delete-EmptyDirs($SomeDir) {
+function Remove-EmptyDirectory($SomeDir) {
     foreach ($childDirectory in Get-ChildItem -Force -LiteralPath $SomeDir -Directory) {
-        & Delete-EmptyDirs $childDirectory.FullName
+        & Remove-EmptyDirectory $childDirectory.FullName
     }
     $currentChildren = Get-ChildItem -Force -LiteralPath $SomeDir
     $isEmpty = $currentChildren -eq $null
     if ($SomeDir -and $isEmpty) { Remove-Item -Force -LiteralPath $SomeDir }
 }
 
-function Delete-OldFiles($SomeDir, $days) {
+function Remove-OldFile($SomeDir, $days) {
     $KillDate = ((Get-Date).AddDays(-$days))
     Get-ChildItem -File -Recurse -ErrorAction SilentlyContinue -Path $SomeDir |
         Where-Object { $_.LastWriteTime -lt $KillDate } |
         Remove-Item -Force -ErrorAction SilentlyContinue
-    if ($SomeDir) { Delete-EmptyDirs $SomeDir }
+    if ($SomeDir) { Remove-EmptyDirectory $SomeDir }
 }
 
-function Cleanup-TempDirs($OlderThanDays=5){
+function Clear-TemporaryDirectory($OlderThanDays=5){
     $dirs = @()
     $dirs += (dir "c:\users\*\Appdata\Local\Temp\").fullname
     $dirs += 'C:\Windows\Temp'
     $dirs += 'C:\Windows\Prefetch'
-    $dirs | ForEach-Object { Delete-OldFiles $_ $OlderThanDays }
+    $dirs | ForEach-Object { Remove-OldFile $_ $OlderThanDays }
 }
 
-function Cleanup-Trash { Clear-RecycleBin -Force }
-
-function Change-AnyDeskSystemSettings {
+function Set-AnyDeskSystemSettings {
     $file = "C:\ProgramData\AnyDesk\system.conf"
     $key = "ad.security.interactive_access"
     if (Test-Path $file) {
@@ -148,34 +146,34 @@ function Change-AnyDeskSystemSettings {
     }
 }
 
-function StopIfNotAnAdmin(){
-    if (-not (RunningWithElevatedRights)) {
+function Assert-AdministratorAccess(){
+    if (-not (Test-AdministratorAccess)) {
         Write-Host -ForegroundColor Yellow "Re-run me with administrator privileges"
-        WaitForAnyKey "Press any key to close this window"
+        Wait-KeyPress "Press any key to close this window"
         exit
     }
 }
 
-function StartTranscript($terse_line) {
+function Start-LaptopPreparationTranscript($terse_line) {
     Start-Transcript -Append -Path c:\it\log\prepare-laptop.verbose.log > $null
     $ts = (Get-Date -format yyyy-MM-dd` HH:mm:ss)
-    $username = GetNameOfLoggedInUser
-    $bios_sn = GetBiosSN
+    $username = Get-LoggedInUserName
+    $bios_sn = Get-BiosSerialNumber
     Write-Output "$ts $($env:computername) $bios_sn $username $terse_line" >> c:\it\log\prepare-laptop.short.log
 }
 
-function EmptyPcDescr {
+function Clear-ComputerDescription {
     $OSCIM = Get-CimInstance -class Win32_OperatingSystem
     $tmp = $OSCIM.Description
     if ($OSCIM.Description -ne "") {
         $OSCIM.Description = ""
         try { $OSCIM.put() > $null 2>$null } catch {
-            Write-Host-YELLOW "I failed to empty the PC description (it is currently set to '$tmp')"
+            Write-YellowMessage "I failed to empty the PC description (it is currently set to '$tmp')"
         }
     }
 }
 
-function DeleteLocalUserAndData {
+function Remove-LocalUserAndProfile {
     param(
         [Parameter(Mandatory=$true)]
         [string]$UserName
@@ -263,14 +261,7 @@ function DeleteLocalUserAndData {
     }
 }
 
-function EraseLastScreenLine{
-    $pos = $host.UI.RawUI.CursorPosition
-    $host.UI.RawUI.CursorPosition = @{x=0; y=$pos.y}
-    Write-Host -NoNewline (" "*($host.UI.RawUI.WindowSize.Width))
-    $host.UI.RawUI.CursorPosition = @{x=0; y=$pos.y}
-}
-
-function EraseLastScreenCharacter{
+function Clear-PreviousConsoleCharacter{
     $pos = $host.UI.RawUI.CursorPosition
     if ($pos.x -ge 1) {
         $host.UI.RawUI.CursorPosition = @{x=$pos.x-1; y=$pos.y}
@@ -279,15 +270,15 @@ function EraseLastScreenCharacter{
     }
 }
 
-function WaitForAnyKey($prompt) {
+function Wait-KeyPress($prompt) {
     if ($prompt) { Write-Host -ForegroundColor White -NoNewline $prompt }
     Write-Host -ForegroundColor Cyan -NoNewline " $([char]9658)"
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    EraseLastScreenCharacter
+    Clear-PreviousConsoleCharacter
     Write-Host ""
 }
 
-function _PrintPrompt($prompt, $choices_txt, $highlighted) {
+function Write-InputPrompt($prompt, $choices_txt, $highlighted) {
     if ($choices_txt) {
         if ($highlighted) {
             Write-Host -ForegroundColor Cyan -NoNewline "$prompt "
@@ -297,7 +288,7 @@ function _PrintPrompt($prompt, $choices_txt, $highlighted) {
                 $parts[1..99] | ForEach-Object{
                     if ($_) {
                         Write-Host -BackgroundColor Blue -ForegroundColor White -NoNewline "$($_[0])"
-                        Write-Host -ForegroundColor White -NoNewline (text_after $_ 1)
+                        Write-Host -ForegroundColor White -NoNewline (Get-StringFromIndex $_ 1)
                     }
                 }
             }
@@ -310,7 +301,7 @@ function _PrintPrompt($prompt, $choices_txt, $highlighted) {
     }
 }
 
-function ReadUntilItMatches($prompt, $default='', $pattern='', $choices=@()) {
+function Read-ValidatedInput($prompt, $default='', $pattern='', $choices=@()) {
     $choices_txt = ""
     if ($choices) {
         $pattern = "^["
@@ -328,12 +319,12 @@ function ReadUntilItMatches($prompt, $default='', $pattern='', $choices=@()) {
     $in = $null
     while (($null -eq $in) -or ($in -notmatch $pattern)) {
         $pos = $host.UI.RawUI.CursorPosition
-        _PrintPrompt $prompt $choices_txt $true
+        Write-InputPrompt $prompt $choices_txt $true
         Write-Host -ForegroundColor Cyan -NoNewline " $([char]9658) "
         if ($default) {
             Write-Host -ForegroundColor Cyan -NoNewline "$default"
             while (-not [console]::KeyAvailable) { Start-Sleep 0.1 }
-            EraseLastScreenCharacter
+            Clear-PreviousConsoleCharacter
         }
         $in = Read-Host
         if (($in -eq "") -and $default) {
@@ -343,7 +334,7 @@ function ReadUntilItMatches($prompt, $default='', $pattern='', $choices=@()) {
 
         $host.UI.RawUI.CursorPosition = @{x=0; y=$pos.y}
         if ($in -match $pattern) {
-            _PrintPrompt $prompt $choices_txt $false
+            Write-InputPrompt $prompt $choices_txt $false
             Write-Host -ForegroundColor Gray -NoNewline "  $($in -replace '.',' ') "
             $host.UI.RawUI.CursorPosition = @{x=0; y=$pos.y}
             Write-Host -ForegroundColor Gray -NoNewline $prompt
@@ -356,7 +347,7 @@ function ReadUntilItMatches($prompt, $default='', $pattern='', $choices=@()) {
                 Write-Host -ForegroundColor Cyan "$in"
             }
         } else {
-            _PrintPrompt $prompt $choices_txt $false
+            Write-InputPrompt $prompt $choices_txt $false
             Write-Host -ForegroundColor Gray -NoNewline " $([char]9658) "
             Write-Host -ForegroundColor Gray "$in" -NoNewline
             if ($choices) { Write-Host -ForegroundColor Yellow " (Valid choices are: $choice_chars)" } else { Write-Host -ForegroundColor Yellow " (invalid input)" }
@@ -365,27 +356,21 @@ function ReadUntilItMatches($prompt, $default='', $pattern='', $choices=@()) {
     $in
 }
 
-function YesNoQuestion($question, $default='N') { ReadUntilItMatches $question -default $default -choices @("~Yes", "~No") }
+function Read-YesNoAnswer($question, $default='N') { Read-ValidatedInput $question -default $default -choices @("~Yes", "~No") }
 
-function PromptForLocalAccountPassword {
-    Write-Host ""
-    Write-Host "Please enter the temporary password for the new local account." -ForegroundColor Gray
-    ReadUntilItMatches "Temporary password"
-}
-
-function AskIfTestPasses($descr, $notes) {
+function Read-TestConfirmation($descr, $notes) {
     if ($notes) {
         Write-Host ""
         Write-Host -ForegroundColor Gray "($notes)"
     }
-    $failed = ((YesNoQuestion $descr) -eq "n")
+    $failed = ((Read-YesNoAnswer $descr) -eq "n")
     if ($failed) {
         Write-Host -NoNewline -BackgroundColor Red -ForegroundColor White "FAIL"
         Write-Host -ForegroundColor Red " $descr"
     }
 }
 
-function TestAndDisplayResult($Title, $Test, $FailureCmnt) {
+function Write-TestResult($Title, $Test, $FailureCmnt) {
     if ($Test) {
         Write-Host -NoNewline -ForegroundColor Green "PASS "
         Write-Host "$Title" -ForegroundColor Gray
@@ -396,14 +381,14 @@ function TestAndDisplayResult($Title, $Test, $FailureCmnt) {
     }
 }
 
-function PromptForMazarsOfficeLocation {
+function Read-MazarsOfficeLocation {
     $locations = @(Get-Config 'OfficeLocations')
     $choices = @()
     foreach ($item in $locations) { $choices += "~$item" }
 
     $site = ''
     while (-not $site) {
-        $key = ReadUntilItMatches "Where will the laptop be stored?" -choices $choices
+        $key = Read-ValidatedInput "Where will the laptop be stored?" -choices $choices
         foreach ($location in $locations) {
             if ($key -ieq $location.Substring(0,1)) {
                 $site = $location
@@ -414,49 +399,36 @@ function PromptForMazarsOfficeLocation {
     $site
 }
 
-function PromptForStickerNr {
-    ReadUntilItMatches "Enter the number you see on the asset sticker (e.g. 123)" -pattern "^[0-9][0-9][0-9][0-9]*$"
+function Read-AssetStickerNumber {
+    Read-ValidatedInput "Enter the number you see on the asset sticker (e.g. 123)" -pattern "^[0-9][0-9][0-9][0-9]*$"
 }
 
-function PromptToRecordIssueEntry($msg){
+function Write-IssueEntryPrompt($msg){
     Write-Host "Please record the following under the appropriate issue:" -ForegroundColor Gray
     if ($msg -is [string]) {
         Write-Host "   $msg" -ForegroundColor Magenta
     } elseif ($msg -is [System.Collections.IEnumerable]) {
         $msg | ForEach-Object { Write-Host "   $_" -ForegroundColor Magenta }
     } else {
-        throw "PromptToRecordIssueEntry: msg must be either string or array/Enumerable"
+        throw "Write-IssueEntryPrompt: msg must be either string or array/Enumerable"
     }
     Write-Host ""
 }
 
-function DisplayBitlockRecKeyLastDigits {
-    Get-BitLockerVolume | ForEach-Object {
-        $MountPoint = $_.MountPoint
-        $RecoveryKey = [string]($_.KeyProtector).RecoveryPassword
-        if ($RecoveryKey.Length -gt 5) {
-            $last_digits = $RecoveryKey.Substring(42)
-            Write-Output ("    Drive $MountPoint, last digits of BitLocker recovery key ...$last_digits.")
-        }
-    }
-}
-
-function GetNameOfLoggedInUser_with_UI() {
-    $username = GetNameOfLoggedInUser
+function Read-LoggedInUserName() {
+    $username = Get-LoggedInUserName
     if (-not ($username -match "[a-z]")) {
         Write-Host ""
         Write-Host "(If the user is logged in then notify the maintainer that auto-detection failed and continue)" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "Please enter the name (LATIN letters) of the user"
-        $username = (ReadUntilItMatches "Name" -pattern "^[a-zA-Z]")
+        $username = (Read-ValidatedInput "Name" -pattern "^[a-zA-Z]")
     }
     $username
 }
 
 
-function BiosSnToSafeShortStr($text) { Right ($text -replace "[^a-zA-Z0-9]","") 8 }
-
-function UpdateMobosTxt() {
+function Update-MotherboardHistory() {
     $assetNameRegex = Get-Config 'AssetComputerNameRegex'
     if (-not ($env:computername -match $assetNameRegex)) { return }
 
@@ -465,19 +437,19 @@ function UpdateMobosTxt() {
     }
 
     $Mobos=(Get-Item "C:\it\logs\mobos_*.txt" | Select-Object -last 1)
-    $Current_SN = (BiosSnToSafeShortStr (GetBiosSN))
+    $Current_SN = Get-StringSuffix ((Get-BiosSerialNumber) -replace "[^a-zA-Z0-9]", "") 8
     $Last_SN = ($Mobos.BaseName -split "_")[-1]
     if ($Last_SN -ne $Current_SN) {
         if ($Last_SN) {
-            Write-Host "Detected a new motherboard ($(GetBiosSN)), updating c:\it\logs\mobos_...txt" -ForegroundColor Cyan
+            Write-Host "Detected a new motherboard ($(Get-BiosSerialNumber)), updating c:\it\logs\mobos_...txt" -ForegroundColor Cyan
         } else {
-            Write-Host "This is the first time this code runs on this motherboard. Recording S/N $(GetBiosSN) to c:\it\logs\mobos_...txt" -ForegroundColor Cyan
+            Write-Host "This is the first time this code runs on this motherboard. Recording S/N $(Get-BiosSerialNumber) to c:\it\logs\mobos_...txt" -ForegroundColor Cyan
         }
         $newname = ("$($Mobos.BaseName)_$Current_SN.txt")
         Rename-Item $Mobos -NewName $newname
         $ts = (Get-Date -format yyyy-MM-dd` HH:mm:ss)
-        $username = GetNameOfLoggedInUser
-        $bios_sn = GetBiosSN
+        $username = Get-LoggedInUserName
+        $bios_sn = Get-BiosSerialNumber
         Write-Output "                    I detected a new motherboard. I'm noting some basic information below" >> "c:\it\logs\$newname"
         Write-Output "$ts PCNAME=$($env:computername) BIOS_SN=$bios_sn WINDOWS_USER=$username" >> "c:\it\logs\$newname"
     }
@@ -508,12 +480,12 @@ function Invoke-MinimumSetup {
     
 }
 
-function Test-OnMainsPower {
+function Test-MainsPowerConnection {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus -eq 'Online'
 }
 
-function Wait-UntilMainsPowerRemoved {
+function Wait-MainsPowerRemoval {
     [CmdletBinding()]
     param(
         [int]$PollSeconds = 1
@@ -525,7 +497,7 @@ function Wait-UntilMainsPowerRemoved {
 
     Write-Host "Waiting until mains power is removed. Press A to abort..." -NoNewline
 
-    while (Test-OnMainsPower) {
+    while (Test-MainsPowerConnection) {
         $deadline = [DateTime]::UtcNow.AddSeconds($PollSeconds)
 
         while ([DateTime]::UtcNow -lt $deadline) {
@@ -553,16 +525,16 @@ function Wait-UntilMainsPowerRemoved {
 # functions exposed to the IT technicians
 #
 function enlCleanupTrash {
-    StopIfNotAnAdmin
+    Assert-AdministratorAccess
     write-host "Cleaning up Recycle bin"
-    Cleanup-Trash
+    Clear-RecycleBin -Force
 }
 
 
 function enlCleanupTempDirs {
-    StopIfNotAnAdmin
+    Assert-AdministratorAccess
     write-host "Cleaning up TEMP dirs from files older than 2 days"
-    Cleanup-TempDirs 2
+    Clear-TemporaryDirectory 2
 }
 
 
@@ -662,12 +634,12 @@ function enlShowBitlockerCmds {
 
 #TODO Use windows update helper script
 function enlWindowsUpdates($dont_reboot){
-    StopIfNotAnAdmin
+    Assert-AdministratorAccess
     Write-Output ""
     Write-host "C:\Personal: setting ACLs" -foregroundcolor gray
     enlCreateAndSetAclForC_Personal
     Write-Output ""
-    WaitForAnyKey "I will open chrome (and firefox if installed). LEAVE THEM OPEN in order to get updated.`nPress any key to continue"  -ForegroundColor cyan
+    Wait-KeyPress "I will open chrome (and firefox if installed). LEAVE THEM OPEN in order to get updated.`nPress any key to continue"  -ForegroundColor cyan
     try {Start-Process firefox} catch {}
     Start-Process chrome
     Write-Output ""
@@ -688,15 +660,15 @@ function enlInstallVendorUpdater() {
         write-host "Installing Lenovo Commercial Vantage using winget (if already installed I'll also install upgrades if any are available)"
         winget install -e --id 9NR5B8GVVM13 --source msstore --accept-source-agreements --accept-package-agreements --silent 
     } else {
-        Write-Host-RED "Please install the updater for this manufacturer manualy.`n(I don't know how to install the updater of: $manufacturer)"
+        Write-RedMessage "Please install the updater for this manufacturer manualy.`n(I don't know how to install the updater of: $manufacturer)"
     }
 }
 
 
 
 function enlBrandTests($brand='') {
-    StopIfNotAnAdmin
-    StartTranscript "enlBrandTests"
+    Assert-AdministratorAccess
+    Start-LaptopPreparationTranscript "enlBrandTests"
     # you can call enlBrandTests "dell" (or "Lenovo") to skip autodetect
     if ($brand) {
         $manufacturer = (Get-CimInstance Win32_BIOS).Manufacturer
@@ -707,7 +679,7 @@ function enlBrandTests($brand='') {
                 -or `
             ($brand -eq "lenovo" -and (!$dell_match -and $lenovo_match))`
             )
-        TestAndDisplayResult "Is BIOS reporting brand $($brand)?" `
+        Write-TestResult "Is BIOS reporting brand $($brand)?" `
             -Test $test `
             -FailureCmnt "(Get-CimInstance Win32_BIOS).Manufacturer = $manufacturer"
     } else {
@@ -727,14 +699,14 @@ function enlBrandTests($brand='') {
     $inst_sw_file = New-TemporaryFile
     Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* `
     | Out-String > $inst_sw_file
-    $dell_lines = CountWordOccurances "dell" $inst_sw_file
-    $lenovo_lines = CountWordOccurances "lenovo" $inst_sw_file
+    $dell_lines = Measure-WordMatchingLine "dell" $inst_sw_file
+    $lenovo_lines = Measure-WordMatchingLine "lenovo" $inst_sw_file
     Remove-Item $inst_sw_file
 
     $test = ("dell" -match $brand -and ($dell_lines -gt 0 -and $lenovo_lines -eq 0)) `
         -or `
     ("lenovo" -match $brand -and ($dell_lines -eq 0 -and $lenovo_lines -gt 0))
-    TestAndDisplayResult "Is SW for $brand installed and is other brand's SW not?" `
+    Write-TestResult "Is SW for $brand installed and is other brand's SW not?" `
         -Test $test `
         -FailureCmnt "Found $dell_lines references for Dell SW and $lenovo_lines for Lenovo"
     Stop-Transcript > $null
@@ -742,22 +714,22 @@ function enlBrandTests($brand='') {
 
 
 function enlDeleteOldEnlogicUsers {
-    StopIfNotAnAdmin
+    Assert-AdministratorAccess
 
     write-output "Cleaning up home dirs of IT stuf that has left enLogic"
     $LIST_OF_OLD_ENLOGIC_STUF | ForEach-Object{
         $enlogic_user = $_
         if (Test-Path -Path C:\Users\$enlogic_user -PathType Container) {
             write-output "Found C:\Users\$enlogic_user, deleting contents"
-            SudoRmdir C:\Users\$enlogic_user
+            Remove-DirectoryTree C:\Users\$enlogic_user
         }
     }
 }
 
 
 function enlScanForVirus {
-    StopIfNotAnAdmin
-    StartTranscript "enlScanForVirus"
+    Assert-AdministratorAccess
+    Start-LaptopPreparationTranscript "enlScanForVirus"
     Write-Host   "`n`nDownloading Run-DismSfc.ps1" -ForegroundColor cyan
     $dir="C:\IT\bin";$f="Run-DismSfc.ps1";iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f
     Write-Host   "`nRunning Run-DismSfc.ps1" -ForegroundColor cyan
@@ -771,9 +743,9 @@ function enlScanForVirus {
 
 
 function enlSdeleteC {
-    StopIfNotAnAdmin
+    Assert-AdministratorAccess
     write-output "Running sdelete"
-    StartTranscript "enlSdeleteC"
+    Start-LaptopPreparationTranscript "enlSdeleteC"
     # securely erase any trace of deleted data from disk c:
     #---------------------------------------------------------
     C:
@@ -995,7 +967,7 @@ function Add-WifiProfile {
     }
 }
 
-function Get-HWInfo {
+function Get-ComputerHardwareInfo {
 # Returns basic HW info
     $Computer = Get-CimInstance Win32_ComputerSystem
     $CPU = Get-CimInstance Win32_Processor | Select-Object -First 1
@@ -1033,10 +1005,10 @@ function Get-RecentUsers {
     $RecentUsers
 }
 
-function Get-HwAndUsersDescription {
+function Get-ComputerHardwareAndUsersDescription {
 # Returns a line of text whith the basic HW and Owner facts about a PC:
 #   HW: LENOVO; 20T8000SGM; SN PF12345; AMD Ryzen 7 4700U; 953GB; 23GB; Recent Users: NickDemou, anastasis, CodexSandboxOffline
-    $pcInfo = Get-HWInfo 
+    $pcInfo = Get-ComputerHardwareInfo
     $RecentUsers = Get-RecentUsers
     $hwDescription = "HW: $($pcInfo.Vendor); $($pcInfo.Model); SN $($pcInfo.SerialNumber); $($pcInfo.CPU -replace '\(R\)' -replace '\(TM\)' -replace ' with [a-z0-9 ]+'); $($pcInfo.DiskCSizeGB)GB; $($pcInfo.RAMGB)GB; Recent Users: $RecentUsers"
     $hwDescription
