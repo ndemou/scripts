@@ -1,6 +1,32 @@
 <#
-Public functions
+.SYNOPSIS
+Provides shared PowerShell functions for preparing and checking Windows laptops.
+
+.DESCRIPTION
+Dot-source this public library to load helpers for hardware and user information,
+interactive prompts, cleanup, local account management, and technician tasks.
+Loading the file defines functions without running the preparation workflow.
+
+The complete workflow combines this library with public configuration, private
+deployment configuration, and a separate caller script. Private files contain
+environment-specific settings and procedures and are maintained separately from
+the published files.
+
+Some functions require the caller to provide Get-Config, configuration variables,
+or additional workflow functions. Administrative tasks require an elevated
+session and use the deployment's local C:\IT working directories.
+
+.EXAMPLE
+. .\prepare-laptop-public-code.ps1
+Get-ComputerHardwareInfo
+
+Loads the library and reads basic hardware information.
+
+.NOTES
+Functions with the enl prefix are externally callable technician commands.
+Changes to their names must also update caller code and caller documentation.
 #>
+
 
 function Write-RedMessage($msg) { Write-Host -ForegroundColor Red $msg }
 

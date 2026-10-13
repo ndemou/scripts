@@ -620,14 +620,29 @@
           <a class="script-link" href="prepare-laptop-public-code.ps1">prepare-laptop-public-code.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;prepare-laptop-public-code.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for prepare-laptop-public-code.ps1" aria-label="Copy download command for prepare-laptop-public-code.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
-          <p class="script-synopsis">Public functions</p>
+          <p class="script-synopsis">Provides shared PowerShell functions for preparing and checking Windows laptops.</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <p class="script-details-text">Dot-source this public library to load helpers for hardware and user information,<br>interactive prompts, cleanup, local account management, and technician tasks.<br>Loading the file defines functions without running the preparation workflow.</p>
+          <p class="script-details-text">The complete workflow combines this library with public configuration, private<br>deployment configuration, and a separate caller script. Private files contain<br>environment-specific settings and procedures and are maintained separately from<br>the published files.</p>
+          <p class="script-details-text">Some functions require the caller to provide Get-Config, configuration variables,<br>or additional workflow functions. Administrative tasks require an elevated<br>session and use the deployment&#x27;s local C:\IT working directories.</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>. .\prepare-laptop-public-code.ps1<br>Get-ComputerHardwareInfo</p>
+          <p class="script-details-text">Loads the library and reads basic hardware information.</p>
+          <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>Functions with the enl prefix are externally callable technician commands.<br>Changes to their names must also update caller code and caller documentation.</p>
+        </details>
       </li>
       <li class="script-item">
         <div class="script-header">
           <a class="script-link" href="prepare-laptop-public-config.ps1">prepare-laptop-public-config.ps1</a>
           <button class="copy-button" data-copy="$dir=&quot;C:\IT\bin&quot;;$f=&quot;prepare-laptop-public-config.ps1&quot;;mkdir $dir -force &gt;$null;iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f" title="Copy download command for prepare-laptop-public-config.ps1" aria-label="Copy download command for prepare-laptop-public-config.ps1"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 2.75A1.75 1.75 0 0 1 6.75 1h5.5A1.75 1.75 0 0 1 14 2.75v6.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-6.5a.25.25 0 0 0-.25-.25z"></path><path d="M2 5.75C2 4.784 2.784 4 3.75 4h.5a.75.75 0 0 1 0 1.5h-.5a.25.25 0 0 0-.25.25v6.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 9.25 14h-5.5A1.75 1.75 0 0 1 2 12.25z"></path></svg>          </button>
         </div>
-          <p class="script-synopsis">PUBLIC CONFIGURATION</p>
+          <p class="script-synopsis">Defines shared Windows release support groups for laptop quality checks.</p>
+        <details class="script-details">
+          <summary>Read more</summary>
+          <p class="script-details-text">Dot-source this public configuration to populate<br>$WIN_RELEASES_WITH_LONG_SUPPORT and $WIN_RELEASES_WITH_MEDIUM_SUPPORT.<br>The caller combines these groups when checking a laptop&#x27;s Windows release.</p>
+          <p class="script-details-text">The complete workflow also uses a public function library and separate private<br>configuration and caller scripts. Private configuration supplies deployment<br>settings such as network details, account naming rules, and required software.<br>Those settings are maintained separately from this published configuration.</p>
+          <p class="script-details-text"><span class="detail-directive">.NOTES</span><br>The long-support group contains Windows 11 Pro releases with at least one<br>calendar month of support remaining at the last recorded verification.<br>Consult the repository instructions when maintaining the release lists.</p>
+        </details>
       </li>
       <li class="script-item">
         <div class="script-header">
@@ -838,7 +853,7 @@
       Source repository:
       <a href="https://github.com/ndemou/scripts">github.com/ndemou/scripts</a>
     </p>
-    <p class="footer">Last updated at 2026-10-13 12:43 UTC</p>
+    <p class="footer">Last updated at 2026-10-13 13:11 UTC</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {
