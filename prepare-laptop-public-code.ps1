@@ -1,5 +1,5 @@
 <#
-Public / generic functions/code
+Public functions
 #>
 
 function Write-Host-RED($msg) { Write-Host -ForegroundColor Red $msg }
@@ -56,14 +56,14 @@ function GetNameOfLoggedInUser() {
 
 function GetAnyDeskId() {
 
-	# Case 1: "C:\ProgramData\AnyDesk\system.conf"
-	$path = "C:\ProgramData\AnyDesk\system.conf"
-	if (Test-Path $path) {
-		$match = Select-String '^ad\.anynet\.id=' $path
-		if ($match) { return ($match -replace '^.*=','') }
-	}
+    # Case 1: "C:\ProgramData\AnyDesk\system.conf"
+    $path = "C:\ProgramData\AnyDesk\system.conf"
+    if (Test-Path $path) {
+        $match = Select-String '^ad\.anynet\.id=' $path
+        if ($match) { return ($match -replace '^.*=','') }
+    }
 
-	# Case 3: "C:\Users\$user\AppData\Roaming\AnyDesk\system.conf"
+    # Case 3: "C:\Users\$user\AppData\Roaming\AnyDesk\system.conf"
     $user = GetNameOfLoggedInUser
     if ($user) {
         $path = "C:\Users\$user\AppData\Roaming\AnyDesk\system.conf"
@@ -73,7 +73,7 @@ function GetAnyDeskId() {
         }
     }
 
-	# Case 3: AppData\Roaming\AnyDesk\system.conf
+    # Case 3: AppData\Roaming\AnyDesk\system.conf
     Get-ChildItem C:\Users -Directory | ForEach-Object {
         $path = Join-Path $_.FullName 'AppData\Roaming\AnyDesk\system.conf'
         if (Test-Path $path) {
@@ -82,7 +82,7 @@ function GetAnyDeskId() {
         }
     }
 
-	# Case 4: anydesk.exe --get-id
+    # Case 4: anydesk.exe --get-id
     $candidates = @(
         'C:\Program Files (x86)\AnyDesk\AnyDesk.exe',
         'C:\Program Files\AnyDesk\AnyDesk.exe'
@@ -90,13 +90,13 @@ function GetAnyDeskId() {
     foreach ($exe in $candidates) {
         if (Test-Path $exe) {
             $out = & $exe --get-id 2>$null
-			if ($out) {
-				$id = ($out | Select-String '\d').Line | ForEach-Object {
-					($_ -replace '[^\d ]','').Trim()
-				} | Where-Object { $_ }
+            if ($out) {
+                $id = ($out | Select-String '\d').Line | ForEach-Object {
+                    ($_ -replace '[^\d ]','').Trim()
+                } | Where-Object { $_ }
 
-				if ($id) { return ($id | Select-Object -First 1) }
-			}
+                if ($id) { return ($id | Select-Object -First 1) }
+            }
         }
     }
 }
@@ -484,28 +484,28 @@ function UpdateMobosTxt() {
 }
 
 function Invoke-MinimumSetup {
-	$FLAG_FILE = "c:\it\data\flag_prepare_laptop_initial_setup_done"
-	if (Test-Path $FLAG_FILE) {
-		Write-Host "One-time installations already performed - skipping" -ForegroundColor DarkGray
-	} else {
-		Write-Host "Performing one-time installations (NuGet & PSWindowsUpdateI don't see the file: $FLAG_FILE)" -ForegroundColor DarkGray
-		mkdir -force c:\it > $null
-		mkdir -force c:\it\data > $null
-		mkdir -force c:\it\logs > $null
-		mkdir -force c:\it\temp > $null
-		mkdir -force c:\it\bin > $null
-		mkdir -force c:\it\config > $null
-		try {
-			Write-Host "Installing NuGet & PSWindowsUpdate" -ForegroundColor DarkGray
-			Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-			Install-Module PSWindowsUpdate -Confirm:$False -Force
-			echo "" > $FLAG_FILE
-		} catch {
-			Write-Host "Failed to install NuGet & PSWindowsUpdate -- please investigate" -ForegroundColor Red
-		}
-	}
+    $FLAG_FILE = "c:\it\data\flag_prepare_laptop_initial_setup_done"
+    if (Test-Path $FLAG_FILE) {
+        Write-Host "One-time installations already performed - skipping" -ForegroundColor DarkGray
+    } else {
+        Write-Host "Performing one-time installations (NuGet & PSWindowsUpdateI don't see the file: $FLAG_FILE)" -ForegroundColor DarkGray
+        mkdir -force c:\it > $null
+        mkdir -force c:\it\data > $null
+        mkdir -force c:\it\logs > $null
+        mkdir -force c:\it\temp > $null
+        mkdir -force c:\it\bin > $null
+        mkdir -force c:\it\config > $null
+        try {
+            Write-Host "Installing NuGet & PSWindowsUpdate" -ForegroundColor DarkGray
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
+            Install-Module PSWindowsUpdate -Confirm:$False -Force
+            echo "" > $FLAG_FILE
+        } catch {
+            Write-Host "Failed to install NuGet & PSWindowsUpdate -- please investigate" -ForegroundColor Red
+        }
+    }
 
-	
+    
 }
 
 function Test-OnMainsPower {
@@ -578,10 +578,6 @@ function enlUninstallAnydeskIfPresent {
     }
 }
 
-
-function enlEnableBitlocker {
-    Write-Warning "You must manualy execute this script:`nc:\IT\bin\Invoke-EnableBitLockerForDriveC.ps1"
-}
 
 function enlKeepRestorePoint {
     $restoreRegPath = 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore'
@@ -687,13 +683,13 @@ function enlWindowsUpdates($dont_reboot){
 
 
 function enlInstallVendorUpdater() {
-	$manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
-	if ($manufacturer -match '\bLenovo\b') {
-		write-host "Installing Lenovo Commercial Vantage using winget (if already installed I'll also install upgrades if any are available)"
-		winget install -e --id 9NR5B8GVVM13 --source msstore --accept-source-agreements --accept-package-agreements --silent 
-	} else {
-		Write-Host-RED "Please install the updater for this manufacturer manualy.`n(I don't know how to install the updater of: $manufacturer)"
-	}
+    $manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
+    if ($manufacturer -match '\bLenovo\b') {
+        write-host "Installing Lenovo Commercial Vantage using winget (if already installed I'll also install upgrades if any are available)"
+        winget install -e --id 9NR5B8GVVM13 --source msstore --accept-source-agreements --accept-package-agreements --silent 
+    } else {
+        Write-Host-RED "Please install the updater for this manufacturer manualy.`n(I don't know how to install the updater of: $manufacturer)"
+    }
 }
 
 
@@ -703,28 +699,28 @@ function enlBrandTests($brand='') {
     StartTranscript "enlBrandTests"
     # you can call enlBrandTests "dell" (or "Lenovo") to skip autodetect
     if ($brand) {
-		$manufacturer = (Get-CimInstance Win32_BIOS).Manufacturer
-		$dell_match = $manufacturer -match "\bdell\b"
-		$lenovo_match = $manufacturer -match "\blenovo\b"
-		$test = (`
-			($brand -eq "dell" -and ($dell_match -and !$lenovo_match)) `
-				-or `
-			($brand -eq "lenovo" -and (!$dell_match -and $lenovo_match))`
-			)
-		TestAndDisplayResult "Is BIOS reporting brand $($brand)?" `
-			-Test $test `
-			-FailureCmnt "(Get-CimInstance Win32_BIOS).Manufacturer = $manufacturer"
-	} else {
-		if (((Get-CimInstance Win32_BIOS).Manufacturer -match '\bLenovo\b') -or ((Get-CimInstance Win32_BIOS).Manufacturer -match '\bLenovo\b')) {
-			$brand = "Lenovo"
-			write-host -foregroundcolor darkgray "     This PC is a Lenovo"
-		} elseif (((Get-CimInstance Win32_BIOS).Manufacturer -match '\bDell\b') -or ((Get-CimInstance Win32_BIOS).Manufacturer -match '\bDell\b')) {
-			$brand = "Dell"
-			write-host -foregroundcolor darkgray "     This PC is a Dell"
-		} else {
-			$brand = "Dell"
-			write-host -foregroundcolor yellow "*** Not sure what is the Manufacturer -- GUESSING is Dell ***"
-		}
+        $manufacturer = (Get-CimInstance Win32_BIOS).Manufacturer
+        $dell_match = $manufacturer -match "\bdell\b"
+        $lenovo_match = $manufacturer -match "\blenovo\b"
+        $test = (`
+            ($brand -eq "dell" -and ($dell_match -and !$lenovo_match)) `
+                -or `
+            ($brand -eq "lenovo" -and (!$dell_match -and $lenovo_match))`
+            )
+        TestAndDisplayResult "Is BIOS reporting brand $($brand)?" `
+            -Test $test `
+            -FailureCmnt "(Get-CimInstance Win32_BIOS).Manufacturer = $manufacturer"
+    } else {
+        if (((Get-CimInstance Win32_BIOS).Manufacturer -match '\bLenovo\b') -or ((Get-CimInstance Win32_BIOS).Manufacturer -match '\bLenovo\b')) {
+            $brand = "Lenovo"
+            write-host -foregroundcolor darkgray "     This PC is a Lenovo"
+        } elseif (((Get-CimInstance Win32_BIOS).Manufacturer -match '\bDell\b') -or ((Get-CimInstance Win32_BIOS).Manufacturer -match '\bDell\b')) {
+            $brand = "Dell"
+            write-host -foregroundcolor darkgray "     This PC is a Dell"
+        } else {
+            $brand = "Dell"
+            write-host -foregroundcolor yellow "*** Not sure what is the Manufacturer -- GUESSING is Dell ***"
+        }
     }
 
     # Check install SW for reference to brands
@@ -765,7 +761,7 @@ function enlScanForVirus {
     Write-Host   "`n`nDownloading Run-DismSfc.ps1" -ForegroundColor cyan
     $dir="C:\IT\bin";$f="Run-DismSfc.ps1";iwr -useb https://ndemou.github.io/scripts/$f -out $dir\$f
     Write-Host   "`nRunning Run-DismSfc.ps1" -ForegroundColor cyan
-	& "c:\it\bin\Run-DismSfc.ps1"
+    & "c:\it\bin\Run-DismSfc.ps1"
     Write-Host   "Updating AV signatures" -ForegroundColor cyan
     Update-MpSignature
     Write-Host   "Scanning for virus (FULL system scan)" -ForegroundColor cyan
