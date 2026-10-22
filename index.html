@@ -841,8 +841,10 @@
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>**CAUTION**: An unfortunate side-effect of this script is that the updates<br>it installs are not visible in the GUI (Settings -&gt; Windows Updates).<br>The only way to view them:<br>&amp; c:\it\bin\WindowsUpdatesHelper.ps1 -ShowHistory | ft<br>You may add -IncludeAV if you want to also view (the very frequent) Antivirus udpates</p>
           <p class="script-details-text">.PARAMETER Download<br>Perform online scan and download applicable updates that are not yet downloaded, then proceed to install everything downloaded.</p>
           <p class="script-details-text">.PARAMETER Reboot<br>After installation, reboot only if updates require it (or regardless if -RebootAnyway is also used).</p>
+          <p class="script-details-text">.PARAMETER RebootIf<br>Implies -Reboot and permits reboot only when the condition matches the server&#x27;s<br>local time at the reboot decision. Restricts -RebootAnyway, forced reboot tasks,<br>and continuation runs too. A false condition skips reboot without scheduling a<br>later attempt. The normal 60-second countdown may finish outside the condition.</p>
+          <p class="script-details-text">Fields: WeekDay (English Sunday through Saturday), MonthDay (1-31), Hour24 (0-23).<br>WeekDay supports = and &lt;&gt;. Numeric fields support =, &lt;&gt;, &lt;, &lt;=, &gt;, &gt;=.<br>Combine clauses with &#x27;and&#x27;. Names and &#x27;and&#x27; are case-insensitive; spaces around<br>comparisons are optional. Invalid conditions stop the script before update work.</p>
           <p class="script-details-text">.PARAMETER Interactive<br>If specified, the script will include updates flagged as InstallationBehavior.CanRequestUserInput<br>(Like some drivers/firmware that show GUI prompts and wait for user actions -- e.g. clicking &quot;Accept&quot;).<br>Without this switch, such updates are skipped.<br>Alias: -CanRequestUserInput</p>
-          <p class="script-details-text">.PARAMETER RebootAnyway<br>Reboot regardless of whether updates require it (implies -Reboot).</p>
+          <p class="script-details-text">.PARAMETER RebootAnyway<br>Reboot regardless of whether updates require it (implies -Reboot).<br>Still subject to -RebootIf when supplied.</p>
           <p class="script-details-text">.PARAMETER XXX_ResumeAfterReboot<br>DO NOT USE THIS SWITCH. It is used INTERNALLY to continue installations after a reboot.</p>
           <p class="script-details-text">.PARAMETER AbortReboot<br>Abort a reboot initiated by this script</p>
           <p class="script-details-text">.PARAMETER XXX_RebootNow<br>DO NOT USE THIS SWITCH. It is used INTERNALLY to force a reboot.</p>
@@ -858,6 +860,7 @@
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Install any already downloaded updates and reboot if needed:<br>.\WindowsUpdatesHelper.ps1 -Reboot</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Download, Install and if needed reboot:<br>.\WindowsUpdatesHelper.ps1 -Download -Reboot</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Download, Install and reboot regardless of whether updates require it:<br>.\WindowsUpdatesHelper.ps1 -Download -Reboot -RebootAnyway</p>
+          <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>.\WindowsUpdatesHelper.ps1 -Download -RebootIf &quot;WeekDay=Sunday and MonthDay&gt;5 and Hour24&gt;=1 and Hour24&lt;9&quot;</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Show latest Windows Update history entries:<br>.\WindowsUpdatesHelper.ps1 -ShowHistory</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>Show latest Windows Update history entries, include AV updates:<br>.\WindowsUpdatesHelper.ps1 -ShowHistory -LastDays 14 -IncludeAV</p>
           <p class="script-details-text"><span class="detail-directive">.EXAMPLE</span><br>List the most recent 10 log files created by this script (most recent last):<br>.\WindowsUpdatesHelper.ps1 -ListRecentLogs</p>
@@ -869,7 +872,7 @@
       Source repository:
       <a href="https://github.com/ndemou/scripts">github.com/ndemou/scripts</a>
     </p>
-    <p class="footer">Last updated at 2026-10-13 17:26 UTC</p>
+    <p class="footer">Last updated at 2026-10-22 12:19 UTC</p>
   </main>
   <script>
     document.addEventListener("click", async (event) => {

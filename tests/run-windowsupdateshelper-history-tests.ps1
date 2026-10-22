@@ -201,8 +201,22 @@ $tests = @(
   @{
     Name = 'Startup diagnostic output is only shown with Debug'
     Body = {
-      $normalOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath -ListRecentLogs *>&1 | Out-String
-      $debugOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath -ListRecentLogs -Debug *>&1 | Out-String
+      # Exercise the entry point without touching real tasks or transcript files.
+      $taskQueries = [System.Collections.Generic.List[string]]::new()
+      function Get-ScheduledTask {
+        [CmdletBinding()]
+        param([string]$TaskName)
+        $taskQueries.Add($TaskName)
+        return $null
+      }
+      function Unregister-ScheduledTask { throw 'Unexpected task removal during a logging test.' }
+      function Start-Transcript { param($Path, [switch]$Force) }
+      function Stop-Transcript {}
+
+      $normalOutput = & $scriptPath -ListRecentLogs 6>&1 | Out-String
+      $debugOutput = & $scriptPath -ListRecentLogs -Debug 6>&1 | Out-String
+
+      Assert-Equal $taskQueries.Count 2 'Expected both entry-point runs to use the task mock.'
 
       Assert-True (-not ($normalOutput -match 'Logging to file:')) 'Did not expect transcript path output without -Debug.'
       Assert-True (-not ($normalOutput -match 'Debug: Command:')) 'Did not expect command diagnostics without -Debug.'
