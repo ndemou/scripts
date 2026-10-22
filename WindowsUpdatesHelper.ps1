@@ -224,6 +224,31 @@ function Test-RebootPending {
 
 <#
 .SYNOPSIS
+Estimates the UTC boot time from native 64-bit uptime, without WMI.
+.NOTES
+Uptime includes sleep and hibernation. Wall-clock corrections can shift the
+estimated boot timestamp because it is calculated from the current UTC time.
+#>
+function Get-WuSystemBootTimeUtc {
+    [CmdletBinding()]
+    param()
+
+    if (-not ('WindowsUpdateHelperBootClock' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class WindowsUpdateHelperBootClock {
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    public static extern ulong GetTickCount64();
+}
+'@ -ErrorAction Stop
+    }
+
+    $uptimeMilliseconds = [WindowsUpdateHelperBootClock]::GetTickCount64()
+    [datetime]::UtcNow.AddMilliseconds(-[double]$uptimeMilliseconds)
+}
+
+<#
+.SYNOPSIS
 Writes a labeled debug dump of an object to host output.
 
 .DESCRIPTION
@@ -404,7 +429,7 @@ function Register-WuForcedRebootTask {
   if(-not $ScriptPath){ Write-Host -ForegroundColor Red "ERROR: Tried to schedule a forced reboot but ScriptPath is empty."; return $false }
   try{
     $psExe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $armedAtText=$ArmedAt.ToString('s')
+    $armedAtText=$ArmedAt.ToUniversalTime().ToString('o',[Globalization.CultureInfo]::InvariantCulture)
     $argLine='-NoLogo -NoProfile -ExecutionPolicy Bypass -File "'+$ScriptPath+'" -XXX_RebootNow -XXX_RebootArmedAt "'+$armedAtText+'"'
     $action=New-ScheduledTaskAction -Execute $psExe -Argument $argLine
     $runAt=(Get-Date).AddMinutes($Minutes)
@@ -2068,11 +2093,13 @@ if($XXX_RebootNow){
 
   $armedText=(($XXX_RebootArmedAt -as [string]).Trim())
   $armed=[datetime]::MinValue
-  if(-not [datetime]::TryParseExact($armedText,'s',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeLocal,[ref]$armed)){
+  # New tasks use round-trip UTC timestamps; accept legacy local timestamps too.
+  if(-not [datetime]::TryParseExact($armedText,[string[]]@('o','s'),[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind,[ref]$armed)){
     Write-Host -ForegroundColor Red ("WARNING: -XXX_RebootNow was passed but -XXX_RebootArmedAt is not a valid timestamp ('{0}'). Refusing to reboot." -f $armedText)
     if($script:TranscriptEnabled){try{Stop-Transcript|Out-Null;$script:TranscriptEnabled=$false}catch{}}
     return
   }
+  $armedUtc=$armed.ToUniversalTime()
 
   $taskName='WindowsUpdateHelper-ForcedReboot'
   try{
@@ -2084,11 +2111,10 @@ if($XXX_RebootNow){
   } catch {}
 
   try{
-    Write-Host ("{0} Reading system boot time before the forced-reboot check." -f (Get-Date))
-    $os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-    $boot=[datetime]$os.LastBootUpTime
-    if($boot -gt $armed){
-      Write-Host -ForegroundColor Yellow ("Skipping forced reboot because we already rebooted (system boot time {0} is after armed-at {1})." -f $boot.ToString('s'),$armed.ToString('s'))
+    Write-Host ("{0} Estimating system boot time using GetTickCount64 before the forced-reboot check." -f (Get-Date))
+    $bootUtc=Get-WuSystemBootTimeUtc
+    if($bootUtc -gt $armedUtc){
+      Write-Host -ForegroundColor Yellow ("Skipping forced reboot because we already rebooted (estimated boot time {0} is after armed-at {1})." -f $bootUtc.ToString('o'),$armedUtc.ToString('o'))
       if($script:TranscriptEnabled){try{Stop-Transcript|Out-Null;$script:TranscriptEnabled=$false}catch{}}
       return
     }
