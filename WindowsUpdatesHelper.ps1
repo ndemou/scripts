@@ -24,7 +24,8 @@ Batches "normal" updates together; installs "exclusive" updates one-by-one; acce
  - Pending reboot detection uses WU `RebootRequired` and CBS `RebootPending`.
  - Post-download refresh search has a catch/fallback: if the refresh search throws, proceeds using the initial search results (with a warning).
  - Uses only supported, inbox components (no extra modules, no `UsoClient`, PS 5.1-safe syntax).
- - Reboot is first tried without /f and after a few minutes with /f.
+ - The 60-second shutdown countdown implies /f. Immediate -Reboot/-RebootIf modes
+   retain a second attempt after five minutes; -RebootAt has no forced fallback.
 
 If an update (e.g. Servicing Stack) installs and immediately requires a reboot; subsequent updates will fail with 0x80240030 until reboot. If such failures are detected and the script was run with -Reboot or -RebootAnyway,
   the script will ensure continuation of installations after the reboot like this:
@@ -83,6 +84,28 @@ WeekDay supports = and <>. Numeric fields support =, <>, <, <=, >, >=.
 Combine clauses with 'and'. Names and 'and' are case-insensitive; spaces around
 comparisons are optional. Invalid conditions stop the script before update work.
 
+.PARAMETER RebootAt
+Implies -Reboot. After installation, schedules one reboot at the next matching
+local date and time, only if needed (or regardless with -RebootAnyway).
+Syntax: 'HH:mm', optionally followed by WeekDay or MonthDay comparisons joined
+with 'and', for example '06:14 and WeekDay=Sunday and MonthDay>14'.
+WeekDay supports = and <> with English day names. MonthDay (1-31) supports
+=, <>, <, <=, >, >=. Hour and Hour24 are not supported here.
+Cannot be combined with -RebootIf. Invalid or impossible schedules stop the
+script before update work. The selected date and time are written to the log.
+Nonexistent local times during a DST change are skipped; ambiguous local times
+use the standard-time occurrence.
+
+The scheduled task issues shutdown /r /t 60: '06:14' normally starts the reboot
+around 06:15. A missed scheduled minute is skipped without catch-up or retry.
+There is no forced fallback, even if an intervening manual reboot occurred.
+If further installation is needed, continuation runs may request additional
+reboots independently of the original schedule for up to ONE HOUR after the
+initial scheduled time. This deadline is never extended by continuation runs.
+The 60-second countdown must fit within that hour. Continuation state is only
+created when requesting a reboot, not while scheduling it days in advance.
+Use -AbortReboot to cancel the future task and any continuation state too.
+
 .PARAMETER Interactive
 If specified, the script will include updates flagged as InstallationBehavior.CanRequestUserInput
 (Like some drivers/firmware that show GUI prompts and wait for user actions -- e.g. clicking "Accept").
@@ -91,19 +114,28 @@ Alias: -CanRequestUserInput
 
 .PARAMETER RebootAnyway
 Reboot regardless of whether updates require it (implies -Reboot).
-Still subject to -RebootIf when supplied.
+Still subject to -RebootIf or -RebootAt when supplied.
 
 .PARAMETER XXX_ResumeAfterReboot
 DO NOT USE THIS SWITCH. It is used INTERNALLY to continue installations after a reboot.
 
 .PARAMETER AbortReboot
-Abort a reboot initiated by this script
+Abort a reboot initiated by this script and cancel its future reboot and continuation tasks.
 
 .PARAMETER XXX_RebootNow
 DO NOT USE THIS SWITCH. It is used INTERNALLY to force a reboot.
 
 .PARAMETER XXX_RebootArmedAt
 DO NOT USE THIS SWITCH. It is used INTERNALLY to avoid rebooting if a reboot already occured after this time.
+
+.PARAMETER XXX_ScheduledRebootAt
+INTERNAL: the chosen instant for a one-shot -RebootAt task.
+
+.PARAMETER XXX_ContinueAfterReboot
+INTERNAL: prepare continuation only when the scheduled reboot is requested.
+
+.PARAMETER XXX_RebootAtUntil
+INTERNAL: the original, fixed one-hour deadline for -RebootAt continuations.
 
 
 .PARAMETER ShowHistory
@@ -145,6 +177,12 @@ Installs an optional update (needs the update ID)
 
 .EXAMPLE
 .\WindowsUpdatesHelper.ps1 -Download -RebootIf "WeekDay=Sunday and MonthDay>5 and Hour24>=1 and Hour24<9"
+
+.EXAMPLE
+.\WindowsUpdatesHelper.ps1 -Download -RebootAt "06:14"
+
+.EXAMPLE
+.\WindowsUpdatesHelper.ps1 -Download -RebootAt "06:14 and WeekDay=Sunday and MonthDay>14"
 
 .EXAMPLE
 # Show latest Windows Update history entries:
@@ -195,6 +233,8 @@ param(
     [Parameter(ParameterSetName='Install')][switch]$RebootAnyway,
     [Parameter(ParameterSetName='Install')]
     [Parameter(ParameterSetName='Special')][AllowEmptyString()][string]$RebootIf,
+    [Parameter(ParameterSetName='Install')][AllowEmptyString()][string]$RebootAt,
+    [Parameter(ParameterSetName='Install')][datetimeoffset]$XXX_RebootAtUntil = [datetimeoffset]::MinValue,
     [Parameter(ParameterSetName='Install')][Alias('CanRequestUserInput')][switch]$Interactive,
     [Parameter(ParameterSetName='Install')][switch]$XXX_ResumeAfterReboot,
 
@@ -209,6 +249,8 @@ param(
     
     [Parameter(ParameterSetName='Special')][switch]$XXX_RebootNow,
     [Parameter(ParameterSetName='Special')][string]$XXX_RebootArmedAt,
+    [Parameter(ParameterSetName='Special')][datetimeoffset]$XXX_ScheduledRebootAt = [datetimeoffset]::MinValue,
+    [Parameter(ParameterSetName='Special')][switch]$XXX_ContinueAfterReboot,
 	
 	[Parameter(ParameterSetName='InstallOptional')][string]$InstallOptional,
     
@@ -247,21 +289,22 @@ function Test-WuRebootCondition {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Condition,
-        [datetime]$At = (Get-Date)
+        [datetime]$At = (Get-Date),
+        [string]$ArgumentName = 'RebootIf'
     )
 
-    if ([string]::IsNullOrWhiteSpace($Condition)) { throw '-RebootIf must not be empty.' }
+    if ([string]::IsNullOrWhiteSpace($Condition)) { throw "-$ArgumentName must not be empty." }
     $isMatch = $true
     foreach ($clause in [regex]::Split($Condition.Trim(), '(?i)\s+and\s+')) {
         if ($clause -notmatch '^\s*(WeekDay|MonthDay|Hour24)\s*(<>|<=|>=|=|<|>)\s*([A-Za-z]+|[0-9]+)\s*$') {
-            throw "Invalid -RebootIf clause '$clause'. Use WeekDay, MonthDay or Hour24 comparisons joined with 'and'."
+            throw "Invalid -$ArgumentName clause '$clause'. Use supported comparisons joined with 'and'."
         }
         $field = $Matches[1]
         $operator = $Matches[2]
         $value = $Matches[3]
         if ($field -eq 'WeekDay') {
             if ($operator -notin @('=', '<>') -or $value -notin [enum]::GetNames([DayOfWeek])) {
-                throw "Invalid -RebootIf clause '$clause'. WeekDay requires = or <> and an English day name."
+                throw "Invalid -$ArgumentName clause '$clause'. WeekDay requires = or <> and an English day name."
             }
             $actual = [int]$At.DayOfWeek
             $expected = [int][enum]::Parse([DayOfWeek], $value, $true)
@@ -272,7 +315,7 @@ function Test-WuRebootCondition {
             if ($field -eq 'MonthDay') { $minimum = 1; $maximum = 31; $actual = $At.Day }
             $expected = 0
             if (-not [int]::TryParse($value, [ref]$expected) -or $expected -lt $minimum -or $expected -gt $maximum) {
-                throw "Invalid -RebootIf clause '$clause'. $field requires a number from $minimum to $maximum."
+                throw "Invalid -$ArgumentName clause '$clause'. $field requires a number from $minimum to $maximum."
             }
         }
         $clauseMatches = switch ($operator) {
@@ -287,6 +330,44 @@ function Test-WuRebootCondition {
         $isMatch = $isMatch -and $clauseMatches
     }
     return $isMatch
+}
+
+<#
+.SYNOPSIS
+Finds the next matching local reboot time; rejects impossible date conditions.
+#>
+function Get-WuRebootTime {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Schedule, [datetime]$After = (Get-Date))
+
+    $clauses = [regex]::Split($Schedule.Trim(), '(?i)\s+and\s+')
+    if ($clauses[0] -notmatch '^([01][0-9]|2[0-3]):([0-5][0-9])$') {
+        throw '-RebootAt must start with a 24-hour time in HH:mm format.'
+    }
+    $time = [timespan]::FromMinutes(([int]$Matches[1] * 60) + [int]$Matches[2])
+    $dateClauses = @($clauses | Select-Object -Skip 1)
+    foreach ($clause in $dateClauses) {
+        if ($clause -notmatch '^\s*(WeekDay|MonthDay)\b') { throw "Invalid -RebootAt clause '$clause'. Only WeekDay and MonthDay are supported after HH:mm." }
+    }
+    if ($dateClauses.Count) { [void](Test-WuRebootCondition -Condition ($dateClauses -join ' and ') -ArgumentName RebootAt) }
+
+    # Date fields are independent. Reuse the comparison evaluator to intersect
+    # each field's possible values and reject contradictions before searching.
+    $weekCondition = (@($dateClauses | Where-Object { $_ -match '^\s*WeekDay\b' }) -join ' and ')
+    $monthCondition = (@($dateClauses | Where-Object { $_ -match '^\s*MonthDay\b' }) -join ' and ')
+    $weekDays = @(0..6 | Where-Object { -not $weekCondition -or (Test-WuRebootCondition -Condition $weekCondition -At ([datetime]'2023-01-01').AddDays($_)) })
+    $monthDays = @(1..31 | Where-Object { -not $monthCondition -or (Test-WuRebootCondition -Condition $monthCondition -At ([datetime]'2023-01-01').AddDays($_ - 1)) })
+    if (-not $weekDays.Count -or -not $monthDays.Count) { throw '-RebootAt date conditions cannot be satisfied.' }
+
+    # Gregorian weekdays/dates repeat every 400 years; this is a complete bound.
+    for ($day = $After.Date; $day -lt $After.Date.AddYears(400); $day = $day.AddDays(1)) {
+        $candidate = [datetime]::SpecifyKind($day.Add($time), [DateTimeKind]::Unspecified)
+        if ([int]$candidate.DayOfWeek -notin $weekDays -or $candidate.Day -notin $monthDays) { continue }
+        if ([TimeZoneInfo]::Local.IsInvalidTime($candidate)) { continue }
+        if ($candidate.ToUniversalTime() -le $After.ToUniversalTime()) { continue }
+        return $candidate
+    }
+    throw '-RebootAt has no future matching date.'
 }
 
 <#
@@ -530,32 +611,113 @@ False otherwise.
 #>
 function Register-WuResumeAfterRebootTask {
   [CmdletBinding()]
-  param([Parameter(Mandatory=$true)][string]$ScriptPath,[Parameter(Mandatory=$true)][string]$FlagFilePath,[string]$RebootIf)
+  param([Parameter(Mandatory=$true)][string]$ScriptPath,[Parameter(Mandatory=$true)][string]$FlagFilePath,[string]$RebootIf,[datetimeoffset]$RebootAtUntil = [datetimeoffset]::MinValue)
   if($RebootIf){ [void](Test-WuRebootCondition -Condition $RebootIf) }
   $taskName='WindowsUpdateHelper-ResumeAfterReboot'
-  $okFlag=$false;$okTask=$false
-  try{
-    $now=Get-Date
-    Set-Content -LiteralPath $FlagFilePath -Value $now.ToString('s') -Encoding ASCII -Force
-    Write-Host ("[ResumeAfterReboot] Created flag file: {0} (timestamp {1})" -f $FlagFilePath,$now.ToString('s'))
-    $okFlag=$true
-  } catch {
-    Write-Host -ForegroundColor Yellow ("ERROR: [ResumeAfterReboot] Failed to create flag file '{0}': {1}" -f $FlagFilePath,$_.Exception.Message)
+  # The deadline argument alone carries -RebootAt continuation state.
+  $okFlag=($RebootAtUntil -ne [datetimeoffset]::MinValue);$okTask=$false
+  if(-not $okFlag){
+    try{
+      $now=Get-Date
+      Set-Content -LiteralPath $FlagFilePath -Value $now.ToString('s') -Encoding ASCII -Force
+      Write-Host ("[ResumeAfterReboot] Created flag file: {0} (timestamp {1})" -f $FlagFilePath,$now.ToString('s'))
+      $okFlag=$true
+    } catch {
+      Write-Host -ForegroundColor Yellow ("ERROR: [ResumeAfterReboot] Failed to create flag file '{0}': {1}" -f $FlagFilePath,$_.Exception.Message)
+    }
   }
   try{
     $psExe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $argLine='-NoLogo -NoProfile -ExecutionPolicy Bypass -File "'+$ScriptPath+'" -XXX_ResumeAfterReboot'
     if($RebootIf){ $argLine+=' -RebootIf "'+$RebootIf+'"' }
+    if($RebootAtUntil -ne [datetimeoffset]::MinValue){ $argLine+=' -XXX_RebootAtUntil "'+$RebootAtUntil.ToString('o',[Globalization.CultureInfo]::InvariantCulture)+'"' }
     $action=New-ScheduledTaskAction -Execute $psExe -Argument $argLine
     $trigger=New-ScheduledTaskTrigger -AtStartup
     $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force -ErrorAction Stop | Out-Null
     Write-Host ("[ResumeAfterReboot] Registered startup task '{0}' to continue Windows Update after reboot." -f $taskName)
     $okTask=$true
   } catch {
     Write-Host -ForegroundColor Yellow ("ERROR: [ResumeAfterReboot] Failed to register startup task '{0}': {1}" -f $taskName,$_.Exception.Message)
   }
   return ($okFlag -and $okTask)
+}
+
+<#
+.SYNOPSIS
+Registers a single future reboot without creating startup continuation state.
+#>
+function Register-WuScheduledRebootTask {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$ScriptPath,[Parameter(Mandatory=$true)][datetime]$At,[switch]$ContinueAfterReboot)
+
+  $dueUtc=$At.ToUniversalTime()
+  $psExe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $arguments='-NoLogo -NoProfile -ExecutionPolicy Bypass -File "'+$ScriptPath+'" -XXX_ScheduledRebootAt "'+$dueUtc.ToString('o',[Globalization.CultureInfo]::InvariantCulture)+'"'
+  if($ContinueAfterReboot){ $arguments+=' -XXX_ContinueAfterReboot' }
+  $action=New-ScheduledTaskAction -Execute $psExe -Argument $arguments
+  $trigger=New-ScheduledTaskTrigger -Once -At $At
+  # Pin the chosen instant across DST and enforce a single scheduled minute.
+  $trigger.StartBoundary=$dueUtc.ToString('yyyy-MM-ddTHH:mm:ssZ')
+  $trigger.EndBoundary=$dueUtc.AddMinutes(1).ToString('yyyy-MM-ddTHH:mm:ssZ')
+  $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable:$false -DeleteExpiredTaskAfter (New-TimeSpan -Hours 1) -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+  $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  Register-ScheduledTask -TaskName 'WindowsUpdateHelper-ScheduledReboot' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
+  Write-Host ("[RebootAt] Scheduled one reboot request for {0} local time ({1} UTC). Reboot normally starts 60 seconds later. No catch-up or forced fallback." -f $At.ToString('yyyy-MM-dd HH:mm:ss'),$dueUtc.ToString('yyyy-MM-dd HH:mm:ss'))
+}
+
+<#
+.SYNOPSIS
+Requests a scheduled/continuation restart within the original one-hour deadline.
+#>
+function Invoke-WuScheduledRestart {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$ScriptPath,[Parameter(Mandatory=$true)][string]$FlagFilePath,[Parameter(Mandatory=$true)][datetimeoffset]$Until,[switch]$ContinueAfterReboot,[datetimeoffset]$RequestBefore = [datetimeoffset]::MaxValue)
+
+  $nowUtc=(Get-Date).ToUniversalTime()
+  if($nowUtc.AddSeconds(60) -gt $Until.UtcDateTime -or $nowUtc -ge $RequestBefore.UtcDateTime){
+    Write-Host -ForegroundColor Yellow '[RebootAt] Skipping reboot: outside the permitted request time or the countdown would exceed the one-hour deadline.'
+    return
+  }
+  $registered=$false
+  $requested=$false
+  try {
+    if($ContinueAfterReboot){
+      $registered=Register-WuResumeAfterRebootTask -ScriptPath $ScriptPath -FlagFilePath $FlagFilePath -RebootAtUntil $Until
+      if(-not $registered){ Write-Host -ForegroundColor Yellow '[RebootAt] Could not prepare continuation; rerun manually after reboot if needed.' }
+    }
+    $nowUtc=(Get-Date).ToUniversalTime()
+    if($nowUtc.AddSeconds(60) -gt $Until.UtcDateTime -or $nowUtc -ge $RequestBefore.UtcDateTime){
+      Write-Host -ForegroundColor Yellow '[RebootAt] Skipping reboot: permitted request time expired while preparing continuation.'
+      return
+    }
+    Write-Host ("[RebootAt] Requesting reboot in 60 seconds. Continuation deadline: {0} local time. Use -AbortReboot to cancel." -f $Until.LocalDateTime.ToString('yyyy-MM-dd HH:mm:ss'))
+    shutdown.exe /r /t 60 /c "WindowsUpdatesHelper.ps1: scheduled Windows Update reboot" /d p:0:0
+    if($LASTEXITCODE -ne 0){ throw "[RebootAt] shutdown.exe failed with exit code $LASTEXITCODE. No retry is scheduled." }
+    $requested=$true
+  } finally {
+    if($registered -and -not $requested){
+      try { Unregister-ScheduledTask -TaskName 'WindowsUpdateHelper-ResumeAfterReboot' -Confirm:$false -ErrorAction Stop | Out-Null }
+      catch { Write-Host -ForegroundColor Yellow ("[RebootAt] WARNING: Could not remove prepared continuation task: {0}" -f $_.Exception.Message) }
+    }
+  }
+}
+
+<#
+.SYNOPSIS
+Executes a scheduled request only during its chosen minute, with no boot check.
+#>
+function Invoke-WuScheduledReboot {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][datetimeoffset]$At,[Parameter(Mandatory=$true)][string]$ScriptPath,[Parameter(Mandatory=$true)][string]$FlagFilePath,[switch]$ContinueAfterReboot)
+
+  $nowUtc=(Get-Date).ToUniversalTime()
+  if($nowUtc -lt $At.UtcDateTime -or $nowUtc -ge $At.UtcDateTime.AddMinutes(1)){
+    Write-Host -ForegroundColor Yellow ("[RebootAt] Skipping reboot: outside the scheduled minute {0}. No catch-up or retry." -f $At.LocalDateTime.ToString('yyyy-MM-dd HH:mm'))
+    return
+  }
+  # The scheduled reboot remains valid even after an intervening manual reboot.
+  Invoke-WuScheduledRestart -ScriptPath $ScriptPath -FlagFilePath $FlagFilePath -Until $At.AddHours(1) -ContinueAfterReboot:$ContinueAfterReboot -RequestBefore $At.AddMinutes(1)
 }
 
 <#
@@ -572,6 +734,8 @@ Produces one psCustomObject:
   InitiateReboot         : Script decision to trigger reboot now.
   RebootAnyway           : Echo of input policy switch.
   RebootIf               : Conditional reboot policy, evaluated when applying the plan.
+  RebootAt               : Schedule used to select one future reboot time.
+  RebootAtUntil          : Fixed deadline for scheduled-reboot continuations.
   XXX_ResumeAfterReboot  : Echo of internal continuation switch.
   BestToRerunAfterReboot : True when another run after reboot is advised.
   Has80240030            : True when any result has HResult 0x80240030.
@@ -617,6 +781,8 @@ function Get-WuRebootPlan {
     [switch]$Reboot,
     [switch]$RebootAnyway,
     [string]$RebootIf,
+    [string]$RebootAt,
+    [datetimeoffset]$RebootAtUntil = [datetimeoffset]::MinValue,
     [switch]$XXX_ResumeAfterReboot
   )
   $RebootPendingAtEnd=Test-RebootPending
@@ -642,7 +808,7 @@ function Get-WuRebootPlan {
 
   $initiateReboot=$false
   if($RebootAnyway){ $initiateReboot=$true }
-  else { $initiateReboot=($rebootIsNeeded -and ($Reboot -or [bool]$RebootIf)) }
+  else { $initiateReboot=($rebootIsNeeded -and ($Reboot -or [bool]$RebootIf -or [bool]$RebootAt -or $RebootAtUntil -ne [datetimeoffset]::MinValue)) }
 
   [pscustomobject]@{
     RebootPendingAtStart=[bool]$RebootPendingAtStart
@@ -653,6 +819,8 @@ function Get-WuRebootPlan {
     InitiateReboot=[bool]$initiateReboot
     RebootAnyway=[bool]$RebootAnyway
     RebootIf=$RebootIf
+    RebootAt=$RebootAt
+    RebootAtUntil=$RebootAtUntil
     XXX_ResumeAfterReboot=[bool]$XXX_ResumeAfterReboot
     BestToRerunAfterReboot=[bool]$bestToRerunAfterReboot
     Has80240030=[bool]$has80240030
@@ -684,6 +852,19 @@ None.
 function Invoke-WuApplyRebootPlan {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)]$Plan,[Parameter()][AllowNull()][string]$ScriptPath,[Parameter(Mandatory=$true)][string]$FlagFilePath)
+
+  # Scheduled reboots and their continuations never use the legacy fallback.
+  if($Plan.RebootAt -or $Plan.RebootAtUntil -ne [datetimeoffset]::MinValue){
+    if(-not $Plan.InitiateReboot){ Write-Host '[RebootAt] No reboot needed; no task was created.'; return }
+    if(-not $ScriptPath){ throw '[RebootAt] A script file path is required to schedule reboot/continuation.' }
+    if($Plan.RebootAtUntil -ne [datetimeoffset]::MinValue){
+      Invoke-WuScheduledRestart -ScriptPath $ScriptPath -FlagFilePath $FlagFilePath -Until $Plan.RebootAtUntil -ContinueAfterReboot:$Plan.BestToRerunAfterReboot
+    } else {
+      $at=Get-WuRebootTime -Schedule $Plan.RebootAt
+      Register-WuScheduledRebootTask -ScriptPath $ScriptPath -At $at -ContinueAfterReboot:$Plan.BestToRerunAfterReboot
+    }
+    return
+  }
 
   $askUserToReRun=$false
   $continuationRegistered=$false
@@ -790,7 +971,7 @@ function Invoke-WuApplyRebootPlan {
       return
     }
     if($script:TranscriptEnabled){ try{ Stop-Transcript|Out-Null;$script:TranscriptEnabled=$false }catch{} }
-    shutdown.exe /r /t $Plan.ShutdownDelaySeconds /c "WindowsUpdatesHelper.ps1: reboot after installing Windows Updates (Not forced)" /d p:0:0
+    shutdown.exe /r /t $Plan.ShutdownDelaySeconds /c "WindowsUpdatesHelper.ps1: reboot after installing Windows Updates (60-second countdown)" /d p:0:0
   } else {
     if($Plan.RebootIsNeeded){
       Write-Host "****************************************" -ForegroundColor Magenta
@@ -1209,6 +1390,8 @@ function Invoke-InstallPhase {
         [switch]$Reboot,
         [switch]$RebootAnyway,
         [string]$RebootIf,
+        [string]$RebootAt,
+        [datetimeoffset]$RebootAtUntil = [datetimeoffset]::MinValue,
         [switch]$XXX_ResumeAfterReboot,
         [switch]$Interactive
     )
@@ -2002,9 +2185,18 @@ function Invoke-InstallPhase {
 
 
     # Handle "continue-after-reboot" mode
-    $forceReboot = Invoke-WuResumeAfterRebootPart `
-        -XXX_ResumeAfterReboot:$XXX_ResumeAfterReboot `
-        -FlagFilePath $script:ContinueflagFile
+    if($RebootAtUntil -ne [datetimeoffset]::MinValue){
+        Clear-ContinueWUStartupTask
+        $forceReboot=$true
+    } else {
+        $forceReboot = Invoke-WuResumeAfterRebootPart `
+            -XXX_ResumeAfterReboot:$XXX_ResumeAfterReboot `
+            -FlagFilePath $script:ContinueflagFile
+    }
+    if($RebootAtUntil -ne [datetimeoffset]::MinValue -and (Get-Date).ToUniversalTime() -ge $RebootAtUntil.UtcDateTime){
+        Write-Host -ForegroundColor Yellow '[RebootAt] Continuation deadline has passed; skipping installation and reboot.'
+        return
+    }
     if ($forceReboot) { $Reboot = $true }
 
     Ensure-WuService
@@ -2127,6 +2319,8 @@ function Invoke-InstallPhase {
       -Reboot:$Reboot `
       -RebootAnyway:$RebootAnyway `
       -RebootIf $RebootIf `
+      -RebootAt $RebootAt `
+      -RebootAtUntil $RebootAtUntil `
       -XXX_ResumeAfterReboot:$XXX_ResumeAfterReboot
 
     Invoke-WuApplyRebootPlan -Plan $plan -ScriptPath $PSCommandPath -FlagFilePath $script:ContinueflagFile
@@ -2142,6 +2336,13 @@ function Invoke-InstallPhase {
 # Validate before logging, task cleanup, or update work. A valid false condition
 # still allows installation; it only restricts the later reboot decision.
 if($PSBoundParameters.ContainsKey('RebootIf')){ [void](Test-WuRebootCondition -Condition $RebootIf) }
+if($PSBoundParameters.ContainsKey('RebootAt')){
+  if($PSBoundParameters.ContainsKey('RebootIf')){ throw '-RebootAt and -RebootIf cannot be combined.' }
+  [void](Get-WuRebootTime -Schedule $RebootAt)
+}
+if($XXX_RebootAtUntil -ne [datetimeoffset]::MinValue -and (-not $XXX_ResumeAfterReboot -or $RebootAt -or $RebootIf)){
+  throw '-XXX_RebootAtUntil is only valid for an internal continuation without -RebootAt or -RebootIf.'
+}
 
 # ----- Logging / transcript -----
 $script:WuDebugOutputEnabled = ($PSBoundParameters.ContainsKey('Debug') -and [bool]$PSBoundParameters['Debug'])
@@ -2159,7 +2360,45 @@ if ($script:WuDebugOutputEnabled) {
   }
 }
 
-# Cleanup forced reboot Scheduled Task if any (see calls to Schedule-ForcedReboot)
+#-------------------------------------------------------------------------------
+# Implement -AbortReboot
+#-------------------------------------------------------------------------------
+if($AbortReboot){
+    Assert-Elevated
+    foreach($taskName in @('WindowsUpdateHelper-ScheduledReboot','WindowsUpdateHelper-ForcedReboot','WindowsUpdateHelper-ResumeAfterReboot')){
+      $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+      if($task){
+        try {
+          if($task.State -eq 'Running'){ Stop-ScheduledTask -TaskName $taskName -ErrorAction Stop }
+        } catch { Write-Host -ForegroundColor Yellow ("WARNING: Could not stop task '{0}': {1}" -f $taskName,$_.Exception.Message) }
+        try {
+          Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop | Out-Null
+          Write-Host ("Cancelled task '{0}'." -f $taskName)
+        } catch { Write-Host -ForegroundColor Yellow ("WARNING: Could not remove task '{0}': {1}" -f $taskName,$_.Exception.Message) }
+      }
+    }
+    $flag=Join-Path "$env:windir\Temp" 'WindowsUpdateHelper.ResumeAfterReboot.flag'
+    try {
+      if(Test-Path -LiteralPath $flag){ Remove-Item -LiteralPath $flag -Force -ErrorAction Stop }
+    } catch { Write-Host -ForegroundColor Yellow ("WARNING: Could not remove continuation flag: {0}" -f $_.Exception.Message) }
+    shutdown.exe /a
+    if ($LASTEXITCODE -eq 0) {Write-Host -ForegroundColor green "Reboot aborted."}
+    if($script:TranscriptEnabled){try{Stop-Transcript|Out-Null;$script:TranscriptEnabled=$false}catch{}}
+    return
+}
+
+# Scheduled actions must not perform update work or use the forced-reboot path.
+if($XXX_ScheduledRebootAt -ne [datetimeoffset]::MinValue){
+    Assert-Elevated
+    try {
+      Invoke-WuScheduledReboot -At $XXX_ScheduledRebootAt -ScriptPath $PSCommandPath -FlagFilePath (Join-Path "$env:windir\Temp" 'WindowsUpdateHelper.ResumeAfterReboot.flag') -ContinueAfterReboot:$XXX_ContinueAfterReboot
+    } finally {
+      if($script:TranscriptEnabled){try{Stop-Transcript|Out-Null;$script:TranscriptEnabled=$false}catch{}}
+    }
+    return
+}
+
+# Legacy cleanup only: never remove a future -RebootAt task on another run.
 $taskName='WindowsUpdateHelper-ForcedReboot'
 try{
   Write-Host ("{0} Checking for forced-reboot task '{1}' during startup cleanup." -f (Get-Date), $taskName)
@@ -2168,17 +2407,6 @@ try{
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
   }
 } catch {}
-
-#-------------------------------------------------------------------------------
-# Implement -AbortReboot
-#-------------------------------------------------------------------------------
-if($AbortReboot){
-    Assert-Elevated
-    shutdown.exe /a
-    if ($LASTEXITCODE -eq 0) {Write-Host -ForegroundColor green "Reboot aborted."}
-    if($script:TranscriptEnabled){try{Stop-Transcript|Out-Null;$script:TranscriptEnabled=$false}catch{}}
-    return
-}
 
 #-------------------------------------------------------------------------------
 # Implement -XXX_RebootNow
@@ -2286,6 +2514,8 @@ try {
         -Reboot:$Reboot `
         -RebootAnyway:$RebootAnyway `
         -RebootIf $RebootIf `
+        -RebootAt $RebootAt `
+        -RebootAtUntil $XXX_RebootAtUntil `
         -XXX_ResumeAfterReboot:$XXX_ResumeAfterReboot `
         -Interactive:$Interactive
 } finally {
