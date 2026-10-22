@@ -1694,8 +1694,10 @@ function Invoke-InstallPhase {
     function Clear-ContinueWUStartupTask {
         $taskName = 'WindowsUpdateHelper-ResumeAfterReboot'
         try {
+            Write-Host ("{0} Checking for startup continuation task '{1}'." -f (Get-Date), $taskName)
             $t = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
             if ($t) {
+                Write-Host ("{0} Removing startup continuation task '{1}'." -f (Get-Date), $taskName)
                 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
                 Write-Host ("[Continue] Removed startup task '{0}'." -f $taskName)
             }
@@ -1847,14 +1849,24 @@ function Invoke-InstallPhase {
     $script:ContinueflagFile = Join-Path "$env:windir\Temp" 'WindowsUpdateHelper.ResumeAfterReboot.flag'
     $script:AllUpdateResults = @()
 
-    Write-DbgDump -Json -Label 'InstallPhase.ParamsAndEnv' -Obj ([pscustomobject]@{
-        PSCommandPath=$PSCommandPath
-        PID=$PID
-        ComputerName=$env:COMPUTERNAME
-        UserName=$env:USERNAME
-        PSVersion=($PSVersionTable.PSVersion.ToString())
-        OS=(Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version)
-    })
+    if ($script:WuDebugOutputEnabled) {
+        Write-Host ("{0} Collecting OS diagnostics from the registry." -f (Get-Date))
+        $osDiagnostics = 'unavailable'
+        try {
+            $osDiagnostics = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop |
+                Select-Object ProductName, CurrentBuild
+        } catch {
+            Write-Host -ForegroundColor Yellow ("WARNING: Could not read OS diagnostics ({0}). OS details unavailable; continuing." -f $_.Exception.Message)
+        }
+        Write-DbgDump -Json -Label 'InstallPhase.ParamsAndEnv' -Obj ([pscustomobject]@{
+            PSCommandPath=$PSCommandPath
+            PID=$PID
+            ComputerName=$env:COMPUTERNAME
+            UserName=$env:USERNAME
+            PSVersion=($PSVersionTable.PSVersion.ToString())
+            OS=$osDiagnostics
+        })
+    }
 
     $rebootPendingAtStart = Test-RebootPending
     if ($rebootPendingAtStart) {Write-Host "INFO: Windows indicates a reboot is already pending before performing any action"}
@@ -2020,7 +2032,9 @@ if ($script:WuDebugOutputEnabled) {
 # Cleanup forced reboot Scheduled Task if any (see calls to Schedule-ForcedReboot)
 $taskName='WindowsUpdateHelper-ForcedReboot'
 try{
+  Write-Host ("{0} Checking for forced-reboot task '{1}' during startup cleanup." -f (Get-Date), $taskName)
   if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){
+    Write-Host ("{0} Removing forced-reboot task '{1}' during startup cleanup." -f (Get-Date), $taskName)
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
   }
 } catch {}
@@ -2062,12 +2076,15 @@ if($XXX_RebootNow){
 
   $taskName='WindowsUpdateHelper-ForcedReboot'
   try{
+    Write-Host ("{0} Checking for forced-reboot task '{1}' before reboot." -f (Get-Date), $taskName)
     if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){
+      Write-Host ("{0} Removing forced-reboot task '{1}' before reboot." -f (Get-Date), $taskName)
       Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
     }
   } catch {}
 
   try{
+    Write-Host ("{0} Reading system boot time before the forced-reboot check." -f (Get-Date))
     $os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
     $boot=[datetime]$os.LastBootUpTime
     if($boot -gt $armed){
