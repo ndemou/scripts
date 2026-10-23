@@ -17,7 +17,7 @@ if ($parseErrors) { throw $parseErrors[0].Message }
 
 # Import only these functions and the forced-reboot branch. The script entry
 # point, Windows Update operations, and real scheduled tasks are never run.
-foreach ($name in @('Get-WuSystemBootTimeUtc', 'Register-WuForcedRebootTask', 'Test-WuRebootCondition')) {
+foreach ($name in @('Get-WuSystemBootTimeUtc', 'Register-WuForcedRebootTask')) {
   $definition = $ast.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -37,7 +37,7 @@ function Assert-True {
 }
 
 function Invoke-RebootCase {
-  param([string]$ArmedAt, [datetime]$BootTimeUtc, [switch]$FailBootTimeRead, [string]$RebootIf, [datetime]$At = (Get-Date))
+  param([string]$ArmedAt, [datetime]$BootTimeUtc, [switch]$FailBootTimeRead)
 
   $XXX_RebootNow = $true
   $XXX_RebootArmedAt = $ArmedAt
@@ -50,7 +50,6 @@ function Invoke-RebootCase {
   }
 
   function Assert-Elevated {}
-  function Get-Date { $At }
   function Write-Host {
     param($Object, $ForegroundColor)
     $state.Messages.Add([string]$Object)
@@ -138,17 +137,4 @@ Write-Host 'PASS    Boot clock errors preserve the existing warning and forced-r
 }
 Write-Host 'PASS    New forced-reboot tasks store armed-at in UTC.'
 
-$condition = 'WeekDay=Sunday and Hour24<9'
-$allowed = Invoke-RebootCase -ArmedAt $armedText -BootTimeUtc $armedUtc.AddDays(-1) -RebootIf $condition -At ([datetime]'2026-11-08T08:59:30')
-Assert-True ($allowed.Shutdowns -eq 1) 'An allowed forced reboot must proceed.'
-Write-Host 'PASS    Forced reboot obeys a currently true condition.'
-
-$denied = Invoke-RebootCase -ArmedAt $armedText -BootTimeUtc $armedUtc.AddDays(-1) -RebootIf $condition -At ([datetime]'2026-11-08T09:00:00')
-Assert-True ($denied.Shutdowns -eq 0) 'The forced task must recheck the condition at its own execution time.'
-Write-Host 'PASS    Forced reboot is skipped after the allowed hour ends.'
-
-$failedAndDenied = Invoke-RebootCase -ArmedAt $armedText -BootTimeUtc $armedUtc -FailBootTimeRead -RebootIf $condition -At ([datetime]'2026-11-08T09:00:00')
-Assert-True ($failedAndDenied.Shutdowns -eq 0) 'The boot clock failure fallback must not bypass RebootIf.'
-Write-Host 'PASS    A boot clock error cannot bypass a false reboot condition.'
-
-Write-Host 'All 12 WindowsUpdatesHelper reboot checks passed.' -ForegroundColor Green
+Write-Host 'All WindowsUpdatesHelper forced-reboot checks passed.' -ForegroundColor Green

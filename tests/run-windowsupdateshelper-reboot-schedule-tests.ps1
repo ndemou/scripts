@@ -12,7 +12,7 @@ $tokens = $null
 $parseErrors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors) { throw $parseErrors[0].Message }
-foreach ($name in @('Test-WuRebootCondition', 'Get-WuRebootTime', 'Get-WuRebootPlan', 'Invoke-WuApplyRebootPlan', 'Register-WuScheduledRebootTask', 'Register-WuResumeAfterRebootTask', 'Invoke-WuScheduledRestart', 'Invoke-WuScheduledReboot')) {
+foreach ($name in @('Test-WuRebootDateCondition', 'Get-WuRebootTime', 'Get-WuRebootPlan', 'Invoke-WuApplyRebootPlan', 'Register-WuScheduledRebootTask', 'Register-WuResumeAfterRebootTask', 'Invoke-WuScheduledRestart', 'Invoke-WuScheduledReboot')) {
   $definition = $ast.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -65,8 +65,9 @@ Assert-True ((& $bindingBlock -XXX_ResumeAfterReboot -XXX_RebootAtUntil $deadlin
 $preflight = @($ast.EndBlock.Statements | Where-Object { $_.Extent.Text.StartsWith('if($PSBoundParameters.ContainsKey(''RebootAt''))') })
 $logging = @($ast.EndBlock.Statements | Where-Object { $_.Extent.Text -match '^\$script:WuDebugOutputEnabled\s*=' })
 Assert-True ($preflight.Count -eq 1 -and $preflight[0].Extent.StartOffset -lt $logging[0].Extent.StartOffset) 'Schedule validation must precede all operational work.'
-$preflightBlock = [scriptblock]::Create('param([string]$RebootAt, [string]$RebootIf)' + "`n" + $preflight[0].Extent.Text)
-Assert-Throws { & $preflightBlock -RebootAt '06:14' -RebootIf 'WeekDay=Sunday' } 'RebootAt and RebootIf must be mutually exclusive.'
+$preflightBlock = [scriptblock]::Create('param([string]$RebootAt)' + "`n" + $preflight[0].Extent.Text)
+Assert-Throws { & $preflightBlock -RebootAt '24:00' } 'Invalid schedules must fail before operational work.'
+Assert-Throws { & $bindingBlock -RebootIf 'WeekDay=Sunday' } 'The removed RebootIf parameter must be rejected.'
 Write-Host 'PASS    Public binding and validation before logging, tasks, or updates.'
 
 # All operations below are mocks. Do not import or invoke the script entry point.
