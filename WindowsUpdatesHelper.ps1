@@ -1,71 +1,37 @@
 <#
 .SYNOPSIS
-Installs Windows Updates using the supported WUA COM API, with optional download, controlled reboot (now or scheduled), and detailed logging.
+Lists pending Windows Updates, installs updates, or shows update history using the WUA COM API.
 
 .DESCRIPTION
+Three main modes. Choose one per invocation:
 
-# SPECIAL SHOW UPDATE HISTORY MODE
+1. STATUS: view pending updates without changing them.
+   -Status Offline lists only updates already downloaded, using cached information.
+   -Status Online scans the configured update source and lists both downloaded
+   updates and updates available for download. Neither downloads update payloads,
+   installs updates, or reboots.
 
-If -ShowHistory is used, the script does NOT install/download/reboot.
-Instead it queries Windows Update history (same source as the GUI "View update history"),
-optionally filtered, and then exits.
+2. INSTALL: install pending updates. This is the default mode.
+   With no mode option, installs eligible updates already downloaded.
+   -Download scans online, downloads missing updates, and then installs them.
+   -Reboot, -RebootAnyway, and -RebootAt control whether and when to reboot.
+   -InstallOptional <UpdateID> installs one optional update by ID.
 
-# NORMAL INSTALL UPDATES MODE
+3. HISTORY: view past update activity.
+   -ShowHistory lists recorded update operations and their results, including
+   failed attempts. It does not list pending updates, download, install, or reboot.
 
-By default(without -ShowHistory) it installs Windows updates like this:
- - Installs already downloaded updates if any.
- - With -Download, will also download all required updates.
- - With -Reboot, will reboot after installation if needed (or regardless with -RebootAnyway).
+-ListRecentLogs and -AbortReboot are separate log and reboot-management commands.
+Detailed arguments and usage examples follow.
 
-Batches "normal" updates together; installs "exclusive" updates one-by-one; accepts EULAs.
-
-## Regarding Robustness
- - Service start is retried up to 3x with exponential delays (5s, 10s, 20s) before failing.
- - Pending reboot detection uses WU `RebootRequired` and CBS `RebootPending`.
- - Post-download refresh search has a catch/fallback: if the refresh search throws, proceeds using the initial search results (with a warning).
- - Uses only supported, inbox components (no extra modules, no `UsoClient`, PS 5.1-safe syntax).
- - The 60-second shutdown countdown implies /f. Immediate -Reboot mode
-   retains a second attempt after five minutes; -RebootAt has no forced fallback.
-
-If an update (e.g. Servicing Stack) installs and immediately requires a reboot; subsequent updates will fail with 0x80240030 until reboot. If such failures are detected and the script was run with -Reboot or -RebootAnyway,
-  the script will ensure continuation of installations after the reboot like this:
-  - Create a temporary scheduled task that runs this script again
-    at startup with -XXX_ResumeAfterReboot.
-  - On that second automated run with -XXX_ResumeAfterReboot: The startup 
-    task is removed and the script continues as normal (install + maybe reboot).
-
-## Logging
-Logs everything to `WindowsUpdateHelper-YYYY-MM-DD.log`
-  1. If C:\IT\LOG exists, log is created there.
-  2. Else if C:\IT\LOGS exists, there.
-  3. Else in the system temp folder.
-
-.EXAMPLE
-The fastest way to bring a new installation up-to-date:
-**CAUTION**: WILL REBOOT WITHOUT WAITING / WITHOUT ASKING
-```
-# Download & first run 
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Unrestricted -Force
-$p="C:\it\bin";mkdir $p -force >$null
-$f="WindowsUpdatesHelper.ps1";iwr -useb https://wiki.enlogic.gr/pub/KnowledgeBase/PublicFiles/$f -OutFile $p\$f
-& C:\it\bin\WindowsUpdatesHelper.ps1 -Download -Reboot 
-
-# 2nd Run (REPEAT UNTIL YOU GET 0 Updates Found)
-& c:\it\bin\WindowsUpdatesHelper.ps1 -Download -Reboot -Interactive 
-# It will also install updates that MAY ask you to accept EULAs or make choices
-```
-.EXAMPLE
-# Display the logs from the last 10 executions of this script
-& c:\it\bin\WindowsUpdatesHelper.ps1 -ListRecentLogs | %{cat $_.fullname|sls -NotMatch '^(Machine|Host Application|Process ID|Log file|Configuration Name|Username|End time|[A-Z][a-z]*(Versions?|Edition)): '} 
-
-.EXAMPLE
-**CAUTION**: An unfortunate side-effect of this script is that the updates
-it installs are not visible in the GUI (Settings -> Windows Updates). 
-The only way to view them:
-```
-& c:\it\bin\WindowsUpdatesHelper.ps1 -ShowHistory | ft 
-# You may add -IncludeAV if you want to also view (the very frequent) Antivirus udpates
-```
+.PARAMETER Status
+List pending updates and exit. Offline uses cached update information and lists
+only updates already downloaded. Online scans the configured Windows Update
+source (including WSUS when configured) and lists downloaded and undownloaded
+updates. The online scan retrieves metadata, not update payloads.
+Both modes include optional and interactive updates, excluding installed or
+hidden updates. Output objects contain Downloaded, KB, Title, and UpdateID.
+Cannot be combined with installation, reboot, history, or log options.
 
 .PARAMETER Download
 Perform online scan and download applicable updates that are not yet downloaded, then proceed to install everything downloaded.
@@ -132,6 +98,14 @@ By default it returns the most recent 10 log files.
 Used only with -ListRecentLogs. If specified, returns all log files that can be found (instead of only the most recent 10).
 
 .EXAMPLE
+# List already downloaded pending updates without installing them:
+.\WindowsUpdatesHelper.ps1 -Status Offline
+
+.EXAMPLE
+# Scan online and list pending updates with their download state:
+.\WindowsUpdatesHelper.ps1 -Status Online
+
+.EXAMPLE
 # Install any already downloaded updates and reboot if needed:
 .\WindowsUpdatesHelper.ps1 -Reboot
 
@@ -161,6 +135,33 @@ Used only with -ListRecentLogs. If specified, returns all log files that can be 
 # List the most recent 10 log files created by this script (most recent last):
 .\WindowsUpdatesHelper.ps1 -ListRecentLogs
 
+.EXAMPLE
+The fastest way to bring a new installation up-to-date:
+**CAUTION**: WILL REBOOT WITHOUT WAITING / WITHOUT ASKING
+```
+# Download & first run 
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Unrestricted -Force
+$p="C:\it\bin";mkdir $p -force >$null
+$f="WindowsUpdatesHelper.ps1";iwr -useb https://wiki.enlogic.gr/pub/KnowledgeBase/PublicFiles/$f -OutFile $p\$f
+& C:\it\bin\WindowsUpdatesHelper.ps1 -Download -Reboot 
+
+# 2nd Run (REPEAT UNTIL YOU GET 0 Updates Found)
+& c:\it\bin\WindowsUpdatesHelper.ps1 -Download -Reboot -Interactive 
+# It will also install updates that MAY ask you to accept EULAs or make choices
+```
+.EXAMPLE
+# Display the logs from the last 10 executions of this script
+& c:\it\bin\WindowsUpdatesHelper.ps1 -ListRecentLogs | %{cat $_.fullname|sls -NotMatch '^(Machine|Host Application|Process ID|Log file|Configuration Name|Username|End time|[A-Z][a-z]*(Versions?|Edition)): '} 
+
+.EXAMPLE
+**CAUTION**: An unfortunate side-effect of this script is that the updates
+it installs are not visible in the GUI (Settings -> Windows Updates). 
+The only way to view them:
+```
+& c:\it\bin\WindowsUpdatesHelper.ps1 -ShowHistory | ft 
+# You may add -IncludeAV if you want to also view (the very frequent) Antivirus udpates
+```
+
 ---
 
 .PARAMETER XXX_ResumeAfterReboot
@@ -180,6 +181,28 @@ INTERNAL: prepare continuation only when the scheduled reboot is requested.
 
 .PARAMETER XXX_RebootAtUntil
 INTERNAL: the original, fixed one-hour deadline for -RebootAt continuations.
+
+.NOTES
+## Regarding Robustness
+ - Service start is retried up to 3x with exponential delays (5s, 10s, 20s) before failing.
+ - Pending reboot detection uses WU `RebootRequired` and CBS `RebootPending`.
+ - Post-download refresh search has a catch/fallback: if the refresh search throws, proceeds using the initial search results (with a warning).
+ - Uses only supported, inbox components (no extra modules, no `UsoClient`, PS 5.1-safe syntax).
+ - The 60-second shutdown countdown implies /f. Immediate -Reboot mode
+   retains a second attempt after five minutes; -RebootAt has no forced fallback.
+
+If an update (e.g. Servicing Stack) installs and immediately requires a reboot; subsequent updates will fail with 0x80240030 until reboot. If such failures are detected and the script was run with -Reboot or -RebootAnyway,
+  the script will ensure continuation of installations after the reboot like this:
+  - Create a temporary scheduled task that runs this script again
+    at startup with -XXX_ResumeAfterReboot.
+  - On that second automated run with -XXX_ResumeAfterReboot: The startup 
+    task is removed and the script continues as normal (install + maybe reboot).
+
+## Logging
+Logs everything to `WindowsUpdateHelper-YYYY-MM-DD.log`
+  1. If C:\IT\LOG exists, log is created there.
+  2. Else if C:\IT\LOGS exists, there.
+  3. Else in the system temp folder.
 #>
 
 <#
@@ -221,6 +244,8 @@ param(
     [Parameter(ParameterSetName='Install')][Alias('CanRequestUserInput')][switch]$Interactive,
     [Parameter(ParameterSetName='Install')][switch]$XXX_ResumeAfterReboot,
 
+    [Parameter(ParameterSetName='Status', Mandatory=$true)][ValidateSet('Offline','Online')][string]$Status,
+
     [Parameter(ParameterSetName='History', Mandatory=$true)][switch]$ShowHistory,
     [Parameter(ParameterSetName='History')][int]$MaxResults = 30,
     [Parameter(ParameterSetName='History')][int]$LastDays,
@@ -256,6 +281,34 @@ function Test-IsSystemAccount {
   $id=[Security.Principal.WindowsIdentity]::GetCurrent()
   if($id -and $id.User){ return ($id.User.Value -eq 'S-1-5-18') }
   return $false
+}
+
+function Get-WuPendingUpdateStatus {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][ValidateSet('Offline','Online')][string]$Mode)
+
+    $session = New-Object -ComObject 'Microsoft.Update.Session' -ErrorAction Stop
+    $searcher = $session.CreateUpdateSearcher()
+    $searcher.Online = ($Mode -eq 'Online')
+    $searcher.CanAutomaticallyUpgradeService = $false
+    $criteria = "(IsInstalled=0 and IsHidden=0 and DeploymentAction='Installation') or (IsInstalled=0 and IsHidden=0 and DeploymentAction='OptionalInstallation')"
+    $result = $searcher.Search($criteria)
+    if ([int]$result.ResultCode -ne 2) {
+        throw "Windows Update status search did not complete successfully (ResultCode=$($result.ResultCode))."
+    }
+    $count = 0
+    for ($i = 0; $i -lt $result.Updates.Count; $i++) {
+        $update = $result.Updates.Item($i)
+        if ($Mode -eq 'Offline' -and -not $update.IsDownloaded) { continue }
+        $count++
+        [pscustomobject]@{
+            Downloaded = [bool]$update.IsDownloaded
+            KB = (@($update.KBArticleIDs) -join ', ')
+            Title = [string]$update.Title
+            UpdateID = [string]$update.Identity.UpdateID
+        }
+    }
+    Write-Host ("Found {0} pending update(s) ({1})." -f $count, $Mode)
 }
 
 function Test-RebootPending {
@@ -2275,6 +2328,12 @@ function Invoke-InstallPhase {
 #       Function(s) that implememt the NORMAL mode of operation
 #       (where we install updates)
 # -------------------------------------------------------------------------------------------------
+
+# Status must exit before logging, task cleanup, or any update/reboot operations.
+if ($PSCmdlet.ParameterSetName -eq 'Status') {
+    Get-WuPendingUpdateStatus -Mode $Status
+    return
+}
 
 # Validate the schedule before logging, task cleanup, or update work.
 if($PSBoundParameters.ContainsKey('RebootAt')){
